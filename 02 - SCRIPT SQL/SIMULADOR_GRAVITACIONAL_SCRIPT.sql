@@ -52,7 +52,7 @@ ALTER TABLE EstadoCorpo
    ON DELETE CASCADE;
    
 /* 6. Criação de Indice de Performance para Otimizar a Leitura do Replay */
-CREATE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
+CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
 
 /* 7. Lista de Selects */
 /* A) Ver a simulação criada */
@@ -75,9 +75,12 @@ SELECT COUNT(*) FROM EstadoCorpo;
 SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
 
-/* D) Comando para apagar as simulações por meio do ID */
-DELETE FROM Simulacao WHERE id_simulacao = 1;
-DELETE FROM Simulacao WHERE id_simulacao = 5;
+/* D) Comando para apagar a simulação e/ou simulações por meio do ID /*
+DELETE FROM Simulacao WHERE id_simulacao = 9;
+DELETE FROM Simulacao WHERE id_simulacao = 10;
+DELETE FROM Simulacao WHERE id_simulacao = 11;
+DELETE FROM Simulacao WHERE id_simulacao = 12;
+DELETE FROM Simulacao; */
 
 /* E) Comando para apagar todas as simulações */
 DELETE FROM Simulacao;

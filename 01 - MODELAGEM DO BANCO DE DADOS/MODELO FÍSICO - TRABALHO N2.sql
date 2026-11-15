@@ -1,12 +1,12 @@
-/* ModeloLógico: */
+/* Modelo Físico: */
 
 CREATE TABLE Simulacao (
     id_simulacao INT PRIMARY KEY AUTO_INCREMENT,
-    nome VARCHAR(255),
-    data_criacao DATETIME,
-    qtd_corpos INT,
-    qtd_iteracoes INT,
-    tempo_entre_iteracoes DOUBLE
+    nome VARCHAR(255) NOT NULL,
+    data_criacao DATETIME DEFAULT CURRENT_TIMESTAMP,
+    qtd_corpos INT NOT NULL,
+    qtd_iteracoes INT NOT NULL,
+    tempo_entre_iteracoes DOUBLE NOT NULL
 );
 
 CREATE TABLE Corpo (
@@ -32,20 +32,14 @@ CREATE TABLE EstadoCorpo (
     corpo_id INT
 );
  
-ALTER TABLE Simulacao ADD CONSTRAINT FK_Simulacao_2
-    FOREIGN KEY (Id_Corpo)
-    REFERENCES Corpo (id_corpo)
-    ON DELETE RESTRICT;
- 
-ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_2
-    FOREIGN KEY (EstadoCorpo)
-    REFERENCES EstadoCorpo (id_registro)
-    ON DELETE RESTRICT;
- 
 ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_3
     FOREIGN KEY (id_simulacao)
-    REFERENCES Simulacao (id_simulacao);
+    REFERENCES Simulacao (id_simulacao)
+    ON DELETE CASCADE;
  
 ALTER TABLE EstadoCorpo ADD CONSTRAINT FK_EstadoCorpo_2
     FOREIGN KEY (corpo_id)
     REFERENCES Corpo (id_corpo)
+    ON DELETE CASCADE;
+    
+CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);

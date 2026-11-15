@@ -115,8 +115,9 @@ DELIMITER ;
 2. **Configurar o Banco de Dados no MySQL**:
    - Abra o MySQL Workbench e execute o script DDL para criar o banco `simulador_gravitacional`, as tabelas e a Stored Procedure.
 
-3. **Configurar a Conexão**:
-   - Ajuste os parâmetros de usuário e senha do MySQL no arquivo `ConexaoBD.cs`.
+3. **Configurar a Conexão** (a senha NUNCA vai no código nem no repositório):
+   - Defina a variável de ambiente `SIMULADOR_DB_CONNECTION` e reinicie o terminal/Visual Studio. No PowerShell:
+     `setx SIMULADOR_DB_CONNECTION "Server=localhost;Port=3306;Database=simulador_gravitacional;User ID=SEU_USUARIO;Password=SUA_SENHA;"`
 
 4. **Iniciar a Aplicação Web**:
    - Execute `dotnet run` no terminal.

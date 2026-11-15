@@ -1,11 +1,9 @@
 {
   "profiles": {
-    "TrabalhoN1.Web": {
+    "SimuladorGravitacionalN2.Web": {
       "commandName": "Project",
       "launchBrowser": true,
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      },
+      "environmentVariables": {},
       "applicationUrl": "http://localhost:5080",
       "launchUrl": ""
     }
