@@ -75,15 +75,15 @@ SELECT COUNT(*) FROM EstadoCorpo;
 SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
 
-/* D) Comando para apagar a simulação e/ou simulações por meio do ID /*
-DELETE FROM Simulacao WHERE id_simulacao = 9;
+/* D) Comando para apagar a simulação e/ou simulações por meio do ID */
+/* DELETE FROM Simulacao WHERE id_simulacao = 9;
 DELETE FROM Simulacao WHERE id_simulacao = 10;
 DELETE FROM Simulacao WHERE id_simulacao = 11;
 DELETE FROM Simulacao WHERE id_simulacao = 12;
 DELETE FROM Simulacao; */
 
 /* E) Comando para apagar todas as simulações */
-DELETE FROM Simulacao;
+/* DELETE FROM Simulacao; */
 
 /* F) Comando para uma consulta de um EstadoCorpo utilizando o Explain Select */
 EXPLAIN SELECT * FROM EstadoCorpo WHERE corpo_id = 1 AND num_passo = 50;
@@ -94,11 +94,26 @@ DESCRIBE Corpo;
 
 /* G) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
 DELIMITER $$
-CREATE PROCEDURE sp_limpar_simulacoes_antigas() 
+CREATE PROCEDURE sp_limpar_simulacoes_antigas()
 BEGIN
-    DELETE FROM Simulacao
-    WHERE data_criacao < DATE_SUB(NOW(), INTERVAL 1 MONTH); 
-    END $$ 
+    DECLARE v_id INT DEFAULT NULL;
+
+    limpeza: LOOP
+        SET v_id = NULL;
+
+        SELECT id_simulacao INTO v_id
+        FROM Simulacao
+        WHERE data_criacao < DATE_SUB(NOW(), INTERVAL 1 MONTH)
+        ORDER BY data_criacao
+        LIMIT 1;
+
+        IF v_id IS NULL THEN
+            LEAVE limpeza;
+        END IF;
+
+        DELETE FROM Simulacao WHERE id_simulacao = v_id;
+    END LOOP;
+END $$
 DELIMITER ;
 
 /* G.1) Executar a limpeza automaticamente uma vez por dia */

@@ -11,25 +11,25 @@ CREATE TABLE Simulacao (
 
 CREATE TABLE Corpo (
     id_corpo INT PRIMARY KEY AUTO_INCREMENT,
-    id_simulacao INT,
-    nome VARCHAR(255),
-    massa DOUBLE,
-    densidade DOUBLE
+    id_simulacao INT NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    massa DOUBLE NOT NULL,
+    densidade DOUBLE NOT NULL
 );
 
 CREATE TABLE EstadoCorpo (
     id_registro BIGINT PRIMARY KEY AUTO_INCREMENT,
-    tempo_decorrido DOUBLE,
-    pos_x DOUBLE,
-    pos_y DOUBLE,
-    vel_x DOUBLE,
-    vel_y DOUBLE,
-    forca_x DOUBLE,
-    forca_y DOUBLE,
-    aceleracao_x DOUBLE,
-    aceleracao_y DOUBLE,
-    num_passo INT,
-    corpo_id INT
+    tempo_decorrido DOUBLE NOT NULL,
+    pos_x DOUBLE NOT NULL,
+    pos_y DOUBLE NOT NULL,
+    vel_x DOUBLE NOT NULL,
+    vel_y DOUBLE NOT NULL,
+    forca_x DOUBLE NOT NULL,
+    forca_y DOUBLE NOT NULL,
+    aceleracao_x DOUBLE NOT NULL,
+    aceleracao_y DOUBLE NOT NULL,
+    num_passo INT NOT NULL,
+    corpo_id INT NOT NULL
 );
  
 ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_3
