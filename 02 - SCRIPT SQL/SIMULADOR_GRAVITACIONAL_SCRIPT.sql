@@ -75,6 +75,45 @@ SELECT COUNT(*) FROM EstadoCorpo;
 SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
 
+
+/* C.3) Consultar a última iteração gravada de uma simulação */
+
+/* Informe o ID da simulação desejada. */
+SET @id_simulacao = 19;
+
+/* Busca os corpos e seus estados na última iteração registrada. */
+SELECT
+    s.id_simulacao,
+    s.nome AS simulacao,
+    ec.num_passo AS ultima_iteracao,
+    ec.tempo_decorrido,
+    c.id_corpo,
+    c.nome AS corpo,
+    c.massa,
+    c.densidade,
+    ec.pos_x,
+    ec.pos_y,
+    ec.vel_x,
+    ec.vel_y,
+    ec.forca_x,
+    ec.forca_y,
+    ec.aceleracao_x,
+    ec.aceleracao_y
+FROM Simulacao s
+INNER JOIN Corpo c
+    ON c.id_simulacao = s.id_simulacao
+INNER JOIN EstadoCorpo ec
+    ON ec.corpo_id = c.id_corpo
+WHERE s.id_simulacao = @id_simulacao
+  AND ec.num_passo = (
+      SELECT MAX(ec2.num_passo)
+      FROM EstadoCorpo ec2
+      INNER JOIN Corpo c2
+          ON c2.id_corpo = ec2.corpo_id
+      WHERE c2.id_simulacao = s.id_simulacao
+  )
+ORDER BY c.id_corpo;
+
 /* D) Comando para apagar a simulação e/ou simulações por meio do ID */
 /* DELETE FROM Simulacao WHERE id_simulacao = 9;
 DELETE FROM Simulacao WHERE id_simulacao = 10;

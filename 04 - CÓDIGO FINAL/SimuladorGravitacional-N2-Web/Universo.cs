@@ -195,17 +195,15 @@ public class Universo
             corpo.PosX = direcaoX * limite;
             corpo.PosY = direcaoY * limite;
 
-            /* Calcula a velocidade na direção do limite. */
-            double velocidadeRadial =
-                corpo.VelX * direcaoX +
-                corpo.VelY * direcaoY;
+            /* Calcula a velocidade total do corpo. */
+            double velocidade = Math.Sqrt(
+                corpo.VelX * corpo.VelX +
+                corpo.VelY * corpo.VelY
+            );
 
-            /* Reflete somente a componente que aponta para fora. */
-            if (velocidadeRadial > 0)
-            {
-                corpo.VelX -= 2 * velocidadeRadial * direcaoX;
-                corpo.VelY -= 2 * velocidadeRadial * direcaoY;
-            }
+            /* Redireciona o movimento diretamente para o centro. */
+            corpo.VelX = -velocidade * direcaoX;
+            corpo.VelY = -velocidade * direcaoY;
         }
     }
 

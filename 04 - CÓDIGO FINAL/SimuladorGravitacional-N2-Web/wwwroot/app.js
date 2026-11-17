@@ -343,7 +343,7 @@ corretamente mesmo que a ordem dos corpos mude. */
 async function loop() {
     if (!running) return;
     await advance(Number($('speed').value));
-    if (running) timer = setTimeout(loop, 40);
+    if (running) timer = setTimeout(loop, 10);
 }
 
 /* Função para iniciar a simulação, alternando entre iniciar, pausar e reiniciar com base no estado atual. */
@@ -613,10 +613,32 @@ $('remove-body').addEventListener('click', () => {
 /* Função para salvar o estado atual da simulação no servidor, com confirmação do usuário se houver um estado existente, e exibir uma mensagem de sucesso ou erro. */
 async function save() {
     if (!state || busy || transition) return;
-    pause(); transition = true; setControls();
-    try { readSettings(); const result = await api('/api/universes/save', state); toast(`Universo salvo em ${result.name}.`); }
-    catch (error) { toast(error.message, true); }
-    finally { transition = false; setControls(); }
+    pause();
+    transition = true;
+    setControls();
+
+    try {
+        readSettings();
+
+        const result = await api('/api/universes/save', state);
+
+        /* Associa a simulação criada ao universo atual. */
+        state.idSimulacao = result.id;
+
+        /* Associa cada corpo ao seu respectivo ID no banco. */
+        state.corpos.forEach((corpo, index) => {
+            corpo.idCorpoBanco = result.corpoIds[index];
+        });
+
+        toast(`Universo salvo em ${result.name}. As próximas iterações serão gravadas.`);
+    }
+    catch (error) {
+        toast(error.message, true);
+    }
+    finally {
+        transition = false;
+        setControls();
+    }
 }
 
 /* Função para carregar a lista de universos salvos do servidor, exibindo-os em um diálogo com opções para abrir ou excluir cada arquivo, e atualizando a interface conforme necessário. */
