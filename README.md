@@ -100,7 +100,7 @@ DELIMITER ;
 
 - **Carga Diária Estimada**: 50 simulações/dia com 400 corpos e 100 iterações.
 - **Registros em `EstadoCorpo`**: 50 x 400 x 100 = **2.000.000 registros/dia**.
-- **Consumo Estimado de Disco**: ~200 MB/dia ➔ **~6,0 GB/mês**.
+- **Consumo Estimado de Disco**: ~200 MB/dia ➔ **~11,06 GB/mês**.
 - **Justificativa Técnica**: Valida a chave primária `BIGINT` na tabela `EstadoCorpo`, a otimização com o índice composto `idx_estado_corpo_passo` e a necessidade da Stored Procedure para expurgo periódico.
 
 ## 💻 Como Executar a Aplicação Web

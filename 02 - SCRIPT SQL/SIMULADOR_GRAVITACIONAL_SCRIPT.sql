@@ -1,5 +1,5 @@
 /* 1. Criação e Seleção do Banco de Dados */
-DROP DATABASE IF EXISTS simulador_gravitacional;
+/* DROP DATABASE IF EXISTS simulador_gravitacional; */
 CREATE DATABASE IF NOT EXISTS simulador_gravitacional; 
 USE simulador_gravitacional;
 
@@ -93,7 +93,7 @@ DESCRIBE EstadoCorpo;
 DESCRIBE Corpo;
 
 /* F.2) Um Select para testar o Replay */
-SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = 300);
+SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = 19);
 
 /* G) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
 DELIMITER $$
