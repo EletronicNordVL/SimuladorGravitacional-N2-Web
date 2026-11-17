@@ -3,4 +3,8 @@
     "SimuladorGravitacionalN2.Web": {
       "commandName": "Project",
       "launchBrowser": true,
-      "environmentVariables": {"SIMULADOR_DB_CONNECTION": "Server=localhost;Port=3306;Database=simulador_gravitaciona
+       "environmentVariables": {"SIMULADOR_DB_CONNECTION": "Server=localhost;Port=3306;Database=simulador_gravitacional;User ID=root;Password=Kd15ssr3ZDif;"},
+      "hotReloadEnabled": false
+    }
+  }
+}

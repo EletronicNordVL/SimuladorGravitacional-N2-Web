@@ -168,8 +168,6 @@ public class Universo
         });
     }
 
-    /* Tratar colisões entre os corpos, ajustando posições e velocidades conforme necessário. */
-
     /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
     public void TratarColisoes()
     {

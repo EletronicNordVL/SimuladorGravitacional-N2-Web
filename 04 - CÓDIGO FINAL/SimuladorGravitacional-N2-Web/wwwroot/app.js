@@ -89,7 +89,10 @@ function setControls() {
 
     /* Pausar deve continuar disponível durante a requisição de um passo. */
     $('play-button').disabled = !state || transition;
-    $('step-button').disabled = blocked || running || state?.iteration >= state?.quantidadeIteracoes;
+    $('step-button').disabled =
+        blocked || running ||
+        state?.corpos.length <= 1 ||
+        state?.iteration >= state?.quantidadeIteracoes;
     $('iterations').disabled = running || busy || transition;
     $('timestep').disabled = running || busy || transition;
 
@@ -102,7 +105,9 @@ function setControls() {
 
 /* Função para atualizar o status da simulação e os controles da interface. */
 function updateStatus() {
-    const completed = state && state.iteration >= state.quantidadeIteracoes;
+    const completed = state &&
+        (state.corpos.length <= 1 ||
+            state.iteration >= state.quantidadeIteracoes);
     $('status').textContent = (replay ? 'REPLAY · ' : '') + (running ? 'EM MOVIMENTO' : completed ? 'CONCLUÍDO' : 'PAUSADO');
     $('status').classList.toggle('running', running);
     $('play-button').replaceChildren();
@@ -182,7 +187,8 @@ recebendo o estado inicial do universo criado. */
 /* Função para ler as configurações de iterações e passo de tempo da interface, validá-las e aplicá-las ao estado da simulação. */
 function readSettings() {
     const iterations = Number($('iterations').value), timestep = Number($('timestep').value);
-    if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1000000 || iterations < state.iteration) throw new Error('O limite deve ser inteiro, entre 1 e 1.000.000, e não menor que a iteração atual.');
+    if (!Number.isInteger(iterations) || iterations < 1 || iterations > 2147483647 || iterations < state.iteration)
+        throw new Error('O limite de iterações é inválido.');
     if (!Number.isFinite(timestep) || timestep < .001 || timestep > 86400) throw new Error('O passo de tempo deve estar entre 0,001 e 86.400 segundos.');
     state.quantidadeIteracoes = iterations;
     state.tempoEntreIteracoes = timestep;
@@ -199,6 +205,21 @@ async function advance(steps = 1) {
         readSettings();
         const next = await api('/api/simulation/step', { state, steps });
         state = next;
+
+        /* Se ainda existem vários corpos e o limite foi atingido,
+         * acrescenta mais 300 iterações automaticamente. */
+        if (state.corpos.length > 1 &&
+            state.iteration >= state.quantidadeIteracoes &&
+            state.quantidadeIteracoes < 2147483647) {
+
+            state.quantidadeIteracoes = Math.min(
+                2147483647,
+                state.quantidadeIteracoes + 300
+            );
+
+            $('iterations').value = state.quantidadeIteracoes;
+        }
+
         state.corpos.forEach((body, index) => {
             if (!trails[index]) trails[index] = [];
             trails[index].push({ x: body.posX, y: body.posY });
@@ -207,7 +228,10 @@ async function advance(steps = 1) {
 
 /* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
         updateUI(performance.now() - lastListUpdate > 400);
-        if (state.iteration >= state.quantidadeIteracoes) { pause(); toast('Simulação concluída. Você pode salvar o resultado ou reiniciar.'); }
+        if (state.corpos.length <= 1) {
+            pause();
+            toast('Todos os corpos se fundiram! Simulação concluída.');
+        }
     } catch (error) { pause(); toast(error.message, true); }
     finally { busy = false; setControls(); }
 }
@@ -257,17 +281,55 @@ async function replayAdvance(steps) {
     for (let passo = replay.pos + 1; passo <= alvo; passo++) {
         if (!replay.buffer.has(passo)) await replayFetch(passo);
         const quadro = replay.buffer.get(passo);
-        if (!quadro || quadro.corpos.length !== state.corpos.length) throw new Error('Passo não encontrado no banco de dados.');
+        if (!quadro)
+            throw new Error('Passo não encontrado no banco de dados.');
+
         state.iteration = passo;
         state.elapsed = quadro.tempo;
-/* Atualiza as posições e velocidades dos corpos com base nos dados do quadro do replay, 
-mantendo os rastros das trajetórias. */
-        quadro.corpos.forEach(([posX, posY, velX, velY], index) => {
-            Object.assign(state.corpos[index], { posX, posY, velX, velY });
-            if (!trails[index]) trails[index] = [];
-            trails[index].push({ x: posX, y: posY });
-            if (trails[index].length > 800) trails[index].shift();
+
+        /* Associa cada corpo pelo ID do banco, não pela posição na lista. */
+        const corposPorId = new Map(
+            state.corpos.map(corpo => [corpo.idCorpoBanco, corpo])
+        );
+
+/* Associa cada rastro pelo ID do banco, garantindo que os rastros sejam atualizados 
+corretamente mesmo que a ordem dos corpos mude. */
+        const rastrosPorId = new Map(
+            state.corpos.map((corpo, index) => [
+                corpo.idCorpoBanco,
+                trails[index] || []
+            ])
+        );
+
+/* Cria uma nova lista de corpos atualizada com as posições e velocidades do quadro atual, mantendo os rastros de cada corpo. */
+        const novosCorpos = [];
+
+/* Itera sobre cada corpo no quadro atual, atualizando suas posições e velocidades com base nos dados do replay, e mantendo os rastros de cada corpo. */
+        quadro.corpos.forEach(([idCorpo, posX, posY, velX, velY]) => {
+            const corpo = corposPorId.get(idCorpo);
+
+            if (!corpo)
+                throw new Error('Corpo não encontrado no histórico do Replay.');
+
+            Object.assign(corpo, { posX, posY, velX, velY });
+
+            const rastro = rastrosPorId.get(idCorpo) || [];
+
+            rastro.push({ x: posX, y: posY });
+
+            if (rastro.length > 800)
+                rastro.shift();
+
+            novosCorpos.push(corpo);
         });
+
+        state.corpos = novosCorpos;
+        trails = novosCorpos.map(corpo =>
+            rastrosPorId.get(corpo.idCorpoBanco) || []
+        );
+
+        selected = Math.min(selected, state.corpos.length - 1);
+
 /* Remove o quadro do buffer após aplicá-lo, liberando memória, e atualiza a posição atual do replay. */
         replay.buffer.delete(passo);
         replay.pos = passo;

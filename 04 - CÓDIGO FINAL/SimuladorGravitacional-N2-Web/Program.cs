@@ -107,38 +107,36 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
     var universe = request.State.ToUniverse();
     if (request.Steps < 1 || request.Steps > 100) throw new ArgumentException("Quantidade de passos inválida.");
 
-    /* Calcula o número de passos a serem executados, garantindo que não ultrapasse o número total de iterações do universo. */
     var steps = Math.Min(request.Steps, universe.QuantidadeIteracoes - request.State.Iteration);
+    var passosExecutados = 0;
 
-    /* Se o universo está sendo gravado (IdSimulacao > 0), o gravador retoma a simulação que a tela criou antes
-     * da primeira iteração. Os corpos são recriados a cada requisição, então o gravador refaz o mapa de IDs. */
     using var gravador = request.State.IdSimulacao > 0 ? new GravadorUniversoBD() : null;
     gravador?.RetomarSimulacao(request.State.IdSimulacao, universe.Corpos, request.State.Iteration);
 
-    /* Calcula as forças entre os corpos antes de avançar a simulação, 
-     * garantindo que as forças estejam atualizadas para o estado inicial. */
     universe.CalcularForcas();
+
     for (var i = 0; i < steps; i++)
     {
-        /* Avança a simulação em um passo, atualizando as posições e 
-         * velocidades dos corpos com base nas forças calculadas. */
+        /* Encerra o avanço quando todos os corpos se tornarem um só. */
+        if (universe.Corpos.Count <= 1)
+            break;
+
         universe.AvancarIteracao(universe.TempoEntreIteracoes);
         ValidateBodies(universe.Corpos);
 
-        /* Se o universo está sendo gravado, grava o estado atual dos corpos no banco de dados. */
+        passosExecutados++;
+
         gravador?.GravarPasso(
-            request.State.Iteration + i + 1,
-            request.State.Elapsed + (i + 1) * universe.TempoEntreIteracoes,
+            request.State.Iteration + passosExecutados,
+            request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,
             universe.Corpos);
     }
 
-    /* Grava o que sobrou no buffer e fecha a conexão de gravação. */
     gravador?.FinalizarSimulacao();
 
-    /* Retorna o estado atualizado do universo após os passos executados (as forças já estão atualizadas).
-     * O IdSimulacao volta na resposta para que a tela continue gravando na mesma simulação. */
-    return Snapshot.From(universe, request.State.Iteration + steps,
-        request.State.Elapsed + steps * universe.TempoEntreIteracoes,
+    return Snapshot.From(universe,
+        request.State.Iteration + passosExecutados,
+        request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,
         request.State.IdSimulacao);
 });
 
@@ -317,7 +315,8 @@ record Snapshot(
     public Universo ToUniverse()
     {
         /* Valida os parâmetros do Snapshot antes de criar o Universo. */
-        if (QuantidadeIteracoes < 1 || QuantidadeIteracoes > 1000000) throw new ArgumentException("Use de 1 a 1.000.000 iterações.");
+        if (QuantidadeIteracoes < 1 || QuantidadeIteracoes > int.MaxValue)
+            throw new ArgumentException("Quantidade de iterações inválida.");
 
         /* Valida o tempo entre iterações, garantindo que seja finito e esteja dentro do 
          * intervalo aceitável (0,001 a 86.400 segundos). */

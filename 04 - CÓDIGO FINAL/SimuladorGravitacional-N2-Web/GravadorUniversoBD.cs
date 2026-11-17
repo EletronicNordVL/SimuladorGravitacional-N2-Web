@@ -427,8 +427,9 @@ private const int LinhasPorBloco = 500;
         List<QuadroReplay> quadros = new List<QuadroReplay>();
 
         string sql = @"
-        SELECT ec.num_passo, ec.tempo_decorrido,
-               ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
+SELECT ec.num_passo, ec.tempo_decorrido,
+       c.id_corpo,
+       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
         FROM EstadoCorpo ec
         INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
         WHERE c.id_simulacao = @idSimulacao
@@ -462,10 +463,11 @@ private const int LinhasPorBloco = 500;
                     /* Adiciona os dados do corpo ao quadro atual. */
                     quadros[quadros.Count - 1].Corpos.Add(new double[]
                     {
-                        reader.GetDouble("pos_x"),
-                        reader.GetDouble("pos_y"),
-                        reader.GetDouble("vel_x"),
-                        reader.GetDouble("vel_y")
+    reader.GetInt32("id_corpo"),
+    reader.GetDouble("pos_x"),
+    reader.GetDouble("pos_y"),
+    reader.GetDouble("vel_x"),
+    reader.GetDouble("vel_y")
                     });
                 }
             }
