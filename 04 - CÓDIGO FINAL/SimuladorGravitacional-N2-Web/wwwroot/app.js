@@ -287,7 +287,7 @@ async function replayAdvance(steps) {
         state.iteration = passo;
         state.elapsed = quadro.tempo;
 
-        /* Associa cada corpo pelo ID do banco, não pela posição na lista. */
+ /* Associa cada corpo pelo ID do banco, não pela posição na lista. */
         const corposPorId = new Map(
             state.corpos.map(corpo => [corpo.idCorpoBanco, corpo])
         );
