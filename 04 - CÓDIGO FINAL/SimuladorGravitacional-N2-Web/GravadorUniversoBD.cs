@@ -130,6 +130,12 @@ private const int LinhasPorBloco = 500;
 
                             /* Obtém o ID gerado para o corpo recém-inserido e armazena no mapa de corpos. */
                             int idCorpoGerado = (int)cmdCorpo.LastInsertedId;
+
+                            /* Guarda o ID no próprio corpo para preservá-lo entre requisições HTTP. */
+                            corpo.IdCorpoBanco = idCorpoGerado;
+
+                            /* Armazena o ID do corpo no mapa de corpos, associando o objeto Corpo 
+                             * ao seu ID no banco de dados. */
                             mapaIdCorpos[corpo] = idCorpoGerado;
                         }
                     }
@@ -257,15 +263,15 @@ private const int LinhasPorBloco = 500;
          * A consulta seleciona informações como nome, massa, densidade, posição, velocidade, 
          * força e aceleração. */
         string sql = @"
-        SELECT c.nome, c.massa, c.densidade,
-               ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
-               ec.forca_x, ec.forca_y,
-               ec.aceleracao_x, ec.aceleracao_y
-        FROM EstadoCorpo ec
-        INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
-        WHERE c.id_simulacao = @idSimulacao
-          AND ec.num_passo = @numPasso
-        ORDER BY c.id_corpo;";
+       SELECT c.id_corpo, c.nome, c.massa, c.densidade,
+       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
+       ec.forca_x, ec.forca_y,
+       ec.aceleracao_x, ec.aceleracao_y
+       FROM EstadoCorpo ec
+       INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+       WHERE c.id_simulacao = @idSimulacao
+       AND ec.num_passo = @numPasso
+       ORDER BY c.id_corpo;";
 
         /* Abre uma conexão com o banco de dados e executa a consulta para obter o estado dos corpos. 
          * Os resultados são lidos e armazenados em uma lista de objetos Corpo. */
@@ -295,6 +301,9 @@ private const int LinhasPorBloco = 500;
                         reader.GetDouble("pos_y"),
                         reader.GetDouble("vel_x"),
                         reader.GetDouble("vel_y"));
+
+                    /* Recupera o ID original do corpo no banco de dados. */
+                    corpo.IdCorpoBanco = reader.GetInt32("id_corpo");
 
                     /* Atribui os valores de força e aceleração obtidos do banco de dados 
                      * às propriedades correspondentes do objeto Corpo. */
@@ -342,13 +351,13 @@ private const int LinhasPorBloco = 500;
      * requisição falhar no meio, repeti-la não gera passos duplicados. */
     public void RetomarSimulacao(int idSimulacao, List<Corpo> corpos, int ultimoPasso)
     {
-        List<int> idsCorpos = new List<int>();
+        HashSet<int> idsCorpos = new HashSet<int>();
 
         using (MySqlConnection conexao = ConexaoBD.ObterConexao())
         {
-            /* Lê os IDs dos corpos da simulação, na ordem em que foram gravados. */
+            /* Lê os IDs de todos os corpos originalmente registrados na simulação. */
             using (MySqlCommand cmd = new MySqlCommand(
-                "SELECT id_corpo FROM Corpo WHERE id_simulacao = @idSimulacao ORDER BY id_corpo;", conexao))
+                "SELECT id_corpo FROM Corpo WHERE id_simulacao = @idSimulacao;", conexao))
             {
                 cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
 
@@ -361,18 +370,28 @@ private const int LinhasPorBloco = 500;
                 }
             }
 
-            /* Se a quantidade de corpos mudou (corpo adicionado ou removido), não é a mesma simulação. */
-            if (idsCorpos.Count != corpos.Count)
+            /* Confere se cada corpo atual pertence à simulação gravada.
+             * Permite que existam menos corpos após uma ou mais fusões. */
+            HashSet<int> idsAtuais = new HashSet<int>();
+
+            foreach (var corpo in corpos)
             {
-                throw new ArgumentException(
-                    "Os corpos do universo não coincidem com os da simulação gravada.");
+                if (corpo.IdCorpoBanco <= 0 ||
+                    !idsCorpos.Contains(corpo.IdCorpoBanco) ||
+                    !idsAtuais.Add(corpo.IdCorpoBanco))
+                {
+                    throw new ArgumentException(
+                        "Os corpos do universo não coincidem com os da simulação gravada.");
+                }
             }
 
-            /* Remove passos posteriores ao último passo já confirmado (resto de uma tentativa que falhou). */
+            /* Remove estados posteriores ao último passo confirmado.
+             * Os registros históricos anteriores à fusão são preservados. */
             using (MySqlCommand cmd = new MySqlCommand(@"
-                DELETE ec FROM EstadoCorpo ec
-                INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
-                WHERE c.id_simulacao = @idSimulacao AND ec.num_passo > @ultimoPasso;", conexao))
+            DELETE ec FROM EstadoCorpo ec
+            INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+            WHERE c.id_simulacao = @idSimulacao
+              AND ec.num_passo > @ultimoPasso;", conexao))
             {
                 cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
                 cmd.Parameters.AddWithValue("@ultimoPasso", ultimoPasso);
@@ -380,15 +399,15 @@ private const int LinhasPorBloco = 500;
             }
         }
 
-        /* Refaz o estado interno do gravador para que GravarPasso volte a funcionar. */
+        /* Reconstrói o mapa usando os IDs que acompanham os próprios corpos. */
         mapaIdCorpos.Clear();
         bufferLinhas.Clear();
         erroNaGravacao = false;
         idSimulacaoAtual = idSimulacao;
 
-        for (int i = 0; i < corpos.Count; i++)
+        foreach (var corpo in corpos)
         {
-            mapaIdCorpos[corpos[i]] = idsCorpos[i];
+            mapaIdCorpos[corpo] = corpo.IdCorpoBanco;
         }
     }
 

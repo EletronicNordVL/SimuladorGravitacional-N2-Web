@@ -3,9 +3,4 @@
     "SimuladorGravitacionalN2.Web": {
       "commandName": "Project",
       "launchBrowser": true,
-      "environmentVariables": {},
-      "applicationUrl": "http://localhost:5080",
-      "launchUrl": ""
-    }
-  }
-}
+      "environmentVariables": {"SIMULADOR_DB_CONNECTION": "Server=localhost;Port=3306;Database=simulador_gravitaciona

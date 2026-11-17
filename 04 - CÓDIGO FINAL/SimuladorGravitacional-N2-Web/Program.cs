@@ -159,6 +159,7 @@ app.MapGet("/api/universes", () =>
             name = simulacao.Nome,
             modified = simulacao.DataCriacao
         })
+
         /* Ordena as simulações salvas pela data de modificação em ordem decrescente, 
          * para que as mais recentes apareçam primeiro. */
         .OrderByDescending(simulacao => simulacao.modified)

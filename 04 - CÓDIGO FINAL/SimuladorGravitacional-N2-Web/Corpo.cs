@@ -34,6 +34,10 @@ public class Corpo
         }
     }
 
+    /* ID do registro do corpo no banco de dados.
+ * É preservado no JSON para permitir retomar a gravação após uma fusão. */
+    public int IdCorpoBanco { get; set; }
+
     /* É medida em quilogramas (kg) e representa a quantidade de matéria contida no corpo. */
     public double Massa
     {

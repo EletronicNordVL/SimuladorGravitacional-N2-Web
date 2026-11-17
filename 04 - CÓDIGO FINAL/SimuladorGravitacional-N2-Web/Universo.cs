@@ -169,142 +169,99 @@ public class Universo
     }
 
     /* Tratar colisões entre os corpos, ajustando posições e velocidades conforme necessário. */
+
+    /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
     public void TratarColisoes()
     {
-        /* O raio depende só de massa e densidade (não muda no laço), mas Raio é uma
-         * propriedade calculada com raiz cúbica. Calculá-lo uma vez por corpo troca
-         * n² raízes cúbicas por n. */
-        double[] raios = new double[Corpos.Count];
-        for (int k = 0; k < Corpos.Count; k++)
-        {
-            raios[k] = Corpos[k].Raio;
-        }
+        bool houveFusao;
 
-        /* Percorre todos os pares de corpos para verificar colisões. */
-        for (int i = 0; i < Corpos.Count; i++)
+        do
         {
-            for (int j = i + 1; j < Corpos.Count; j++)
+            houveFusao = false;
+
+            for (int i = 0; i < Corpos.Count && !houveFusao; i++)
             {
-                /* Obtém os corpos que estão sendo comparados na iteração atual. */
-                Corpo corpo1 = Corpos[i];
-                Corpo corpo2 = Corpos[j];
-
-                /* A soma dos raios define o limite para ocorrer uma colisão. */
-                double somaRaios = raios[i] + raios[j];
-
-                /* Compara os QUADRADOS para evitar a raiz quadrada nos pares que não
-                 * colidem (a maioria): d <= r equivale a d² <= r², pois ambos são positivos. */
-                double deltaX = corpo2.PosX - corpo1.PosX;
-                double deltaY = corpo2.PosY - corpo1.PosY;
-                double distanciaQuadrada = deltaX * deltaX + deltaY * deltaY;
-
-                if (distanciaQuadrada <= somaRaios * somaRaios)
+                for (int j = i + 1; j < Corpos.Count; j++)
                 {
-                    /* Só agora calcula a distância real, necessária para a normal. */
-                    double distancia = Math.Sqrt(distanciaQuadrada);
+                    Corpo corpo1 = Corpos[i];
+                    Corpo corpo2 = Corpos[j];
 
-                    /* Calcula a normal da colisão: direção do corpo 1 para o corpo 2. */
-                    double normalX;
-                    double normalY;
+                    double somaRaios = corpo1.Raio + corpo2.Raio;
 
-                    if (distancia > 0)
+                    double dx = corpo2.PosX - corpo1.PosX;
+                    double dy = corpo2.PosY - corpo1.PosY;
+
+                    double distanciaQuadrada = dx * dx + dy * dy;
+
+                    if (distanciaQuadrada <= somaRaios * somaRaios)
                     {
-                        /* Normaliza a direção da colisão para obter a normal. */
-                        normalX = (corpo2.PosX - corpo1.PosX) / distancia;
-                        normalY = (corpo2.PosY - corpo1.PosY) / distancia;
-                    }
-                    else
-                    {
-                        /* Quando os centros coincidem, usa a velocidade relativa para
-                         * definir uma direção de separação e evita divisão por zero. */
-                        double diferencaVelX = corpo2.VelX - corpo1.VelX;
-                        double diferencaVelY = corpo2.VelY - corpo1.VelY;
+                        /* Conservação da massa. */
+                        double massaTotal = corpo1.Massa + corpo2.Massa;
 
-                        /* Calcula o módulo da velocidade relativa para normalizar a direção. */
-                        double moduloVelocidade = Math.Sqrt(
-                            diferencaVelX * diferencaVelX +
-                            diferencaVelY * diferencaVelY);
+                        /* Conservação do momento linear. */
+                        double novaVelX =
+                            (corpo1.Massa * corpo1.VelX +
+                             corpo2.Massa * corpo2.VelX) / massaTotal;
 
-                        /* Normaliza a direção da velocidade relativa para obter a normal da colisão. */
-                        if (moduloVelocidade > 0)
-                        {
-                            /* Normaliza a direção da velocidade relativa para obter a normal da colisão. */
-                            normalX = diferencaVelX / moduloVelocidade;
-                            normalY = diferencaVelY / moduloVelocidade;
-                        }
-                        else
-                        {
-                            /* Se a velocidade relativa também for zero, define uma normal arbitrária. */
-                            normalX = 1;
-                            normalY = 0;
-                        }
-                    }
+                        double novaVelY =
+                            (corpo1.Massa * corpo1.VelY +
+                             corpo2.Massa * corpo2.VelY) / massaTotal;
 
-                    /* Dados do par usados na conservação de energia. */
-                    double somaMassas = corpo1.Massa + corpo2.Massa;
-                    double massaReduzida = corpo1.Massa * corpo2.Massa / somaMassas;
+                        /* Centro de massa. */
+                        double novaPosX =
+                            (corpo1.Massa * corpo1.PosX +
+                             corpo2.Massa * corpo2.PosX) / massaTotal;
 
-                    /* Energia potencial gravitacional do par ANTES de separar os corpos
-                     * (a distância mínima evita divisão por zero se os centros coincidirem). */
-                    double distanciaAntes = Math.Max(distancia, somaRaios * 1e-6);
-                    double potencialAntes = -G * corpo1.Massa * corpo2.Massa / distanciaAntes;
+                        double novaPosY =
+                            (corpo1.Massa * corpo1.PosY +
+                             corpo2.Massa * corpo2.PosY) / massaTotal;
 
-                    /* Resolve a sobreposição. A correção é dividida conforme a massa
-                     * (o corpo mais leve se move mais), então o centro de massa do par não se desloca. */
-                    double sobreposicao = somaRaios - distancia;
+                        /* Conservação do volume para calcular a nova densidade. */
+                        double volumeTotal =
+                            corpo1.Massa / corpo1.Densidade +
+                            corpo2.Massa / corpo2.Densidade;
 
-                    if (sobreposicao > 0)
-                    {
-                        double fracao1 = corpo2.Massa / somaMassas;
-                        double fracao2 = corpo1.Massa / somaMassas;
+                        double novaDensidade = massaTotal / volumeTotal;
 
-                        corpo1.PosX -= sobreposicao * fracao1 * normalX;
-                        corpo1.PosY -= sobreposicao * fracao1 * normalY;
+                        /* Nome do corpo resultante da fusão. */
+                        string novoNome =
+                            $"Fusão ({corpo1.Nome} + {corpo2.Nome})";
 
-                        corpo2.PosX += sobreposicao * fracao2 * normalX;
-                        corpo2.PosY += sobreposicao * fracao2 * normalY;
-                    }
+                        if (novoNome.Length > 60)
+                            novoNome = novoNome.Substring(0, 60);
 
-                    /* Energia potencial DEPOIS de separar. Afastar os corpos realiza trabalho contra
-                     * a gravidade: sem descontar isso, a separação cria energia do nada e os corpos
-                     * podem ganhar energia suficiente para escapar um do outro. */
-                    double potencialDepois = -G * corpo1.Massa * corpo2.Massa / Math.Max(distanciaAntes, somaRaios);
-                    double trabalhoContraGravidade = potencialDepois - potencialAntes;
+                        /* Atualiza o primeiro corpo com os dados da fusão.
+                         * Mantém a mesma instância para preservar seu ID no gravador do banco. */
+                        corpo1.Nome = novoNome;
+                        corpo1.Massa = massaTotal;
+                        corpo1.Densidade = novaDensidade;
 
-                    /* Velocidade relativa projetada na normal (negativa = os corpos estão se aproximando). */
-                    double velocidadeNaNormal =
-                        (corpo2.VelX - corpo1.VelX) * normalX +
-                        (corpo2.VelY - corpo1.VelY) * normalY;
+                        corpo1.PosX = novaPosX;
+                        corpo1.PosY = novaPosY;
 
-                    /* Só é um impacto novo se os corpos estão se aproximando. Corpos em contato que
-                     * já se afastam, ou que repousam um sobre o outro, não geram nova mensagem. */
-                    if (velocidadeNaNormal < 0)
-                    {
+                        corpo1.VelX = novaVelX;
+                        corpo1.VelY = novaVelY;
+
+                        corpo1.ForcaX = 0;
+                        corpo1.ForcaY = 0;
+                        corpo1.AceleracaoX = 0;
+                        corpo1.AceleracaoY = 0;
+
+                        /* Remove o segundo corpo, pois agora existe apenas um. */
+                        Corpos.RemoveAt(j);
+
                         Console.WriteLine(
-                            $"Colisão detectada entre {corpo1.Nome} e {corpo2.Nome}");
+                            $"Fusão realizada: {novoNome}");
+
+                        /* Reinicia a verificação para detectar novas colisões
+                         * envolvendo o corpo resultante. */
+                        houveFusao = true;
+                        break;
                     }
-
-                    /* Colisão elástica: se aproximavam, a componente normal da velocidade relativa inverte;
-                     * se já se afastavam, é mantida. Depois, retira-se da energia cinética relativa o
-                     * trabalho realizado contra a gravidade. */
-                    double energiaRelativa = 0.5 * massaReduzida * velocidadeNaNormal * velocidadeNaNormal
-                                             - trabalhoContraGravidade;
-                    double velocidadeNormalApos = energiaRelativa > 0
-                        ? Math.Sqrt(2.0 * energiaRelativa / massaReduzida)
-                        : 0.0;
-
-                    /* Impulso que leva a componente normal da velocidade relativa ao valor calculado.
-                     * Conserva a quantidade de movimento do par (impulsos iguais e opostos). */
-                    double impulso = massaReduzida * (velocidadeNormalApos - velocidadeNaNormal);
-
-                    corpo1.VelX -= impulso * normalX / corpo1.Massa;
-                    corpo1.VelY -= impulso * normalY / corpo1.Massa;
-
-                    corpo2.VelX += impulso * normalX / corpo2.Massa;
-                    corpo2.VelY += impulso * normalY / corpo2.Massa;
                 }
             }
-        }
+
+        } while (houveFusao);
     }
 
     /* Maior passo de tempo que ainda resolve o encontro mais próximo do universo.
