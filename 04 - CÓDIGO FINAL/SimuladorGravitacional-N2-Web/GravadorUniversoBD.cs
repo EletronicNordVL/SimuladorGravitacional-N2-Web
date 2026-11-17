@@ -440,6 +440,7 @@ private const int LinhasPorBloco = 500;
                         });
                     }
 
+                    /* Adiciona os dados do corpo ao quadro atual. */
                     quadros[quadros.Count - 1].Corpos.Add(new double[]
                     {
                         reader.GetDouble("pos_x"),

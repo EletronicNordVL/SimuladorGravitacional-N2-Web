@@ -50,6 +50,7 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsJsonAsync(new { error = "Não foi possível acessar o banco de dados. Verifique se o MySQL está em execução e se a variável SIMULADOR_DB_CONNECTION está configurada." });
     }
 });
+
 /*  * Middleware para habilitar CORS (Cross-Origin Resource Sharing) para permitir requisições de qualquer origem. */
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -92,24 +93,17 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
     using var gravador = request.State.IdSimulacao > 0 ? new GravadorUniversoBD() : null;
     gravador?.RetomarSimulacao(request.State.IdSimulacao, universe.Corpos, request.State.Iteration);
 
-    /* O estado pode ter sido editado na tela (massa, posição...): recalcula forças e acelerações antes do primeiro passo. */
+    /* Calcula as forças entre os corpos antes de avançar a simulação, 
+     * garantindo que as forças estejam atualizadas para o estado inicial. */
     universe.CalcularForcas();
     for (var i = 0; i < steps; i++)
     {
-        /* Avança uma iteração (posições Velocity Verlet, colisões e forças), com subpassos se houver corpos próximos. */
-        universe.AvancarIteracao(universe.TempoEntreIteracoes);
-        ValidateBodies(universe.Corpos);
-    }
-
-    /* O estado pode ter sido editado na tela (massa, posição...): recalcula forças e acelerações antes do primeiro passo. */
-    universe.CalcularForcas();
-    for (var i = 0; i < steps; i++)
-    {
-        /* Avança uma iteração (posições Velocity Verlet, colisões e forças), com subpassos se houver corpos próximos. */
+        /* Avança a simulação em um passo, atualizando as posições e 
+         * velocidades dos corpos com base nas forças calculadas. */
         universe.AvancarIteracao(universe.TempoEntreIteracoes);
         ValidateBodies(universe.Corpos);
 
-        /* Grava no banco o estado de TODOS os corpos nesta iteração (posição, velocidade, força e aceleração). */
+        /* Se o universo está sendo gravado, grava o estado atual dos corpos no banco de dados. */
         gravador?.GravarPasso(
             request.State.Iteration + i + 1,
             request.State.Elapsed + (i + 1) * universe.TempoEntreIteracoes,
@@ -173,12 +167,14 @@ app.MapPost("/api/universes/save", (Snapshot state) =>
         try { gravador.ExcluirSimulacao(id); } catch { /* melhor esforço: o erro original é o que importa */ }
         throw;
     }
+    /* Retorna o ID e o nome da simulação salva, para que a tela possa continuar gravando na mesma simulação se desejar. */
     return Results.Ok(new { id, name });
 });
 
 /*  Rota para carregar um universo salvo no MySQL. Carrega o passo 0 (condições iniciais) da simulação com o ID informado. */
 app.MapGet("/api/universes/{id:int}", (int id) =>
 {
+    /* Cria uma instância do GravadorUniversoBD para acessar o banco de dados e carregar a simulação com o ID informado. */
     using var gravador = new GravadorUniversoBD();
 
     /* Busca os dados gerais da simulação (quantidade de iterações e tempo entre iterações). */
@@ -200,6 +196,7 @@ app.MapGet("/api/universes/{id:int}", (int id) =>
 /*  Rota para excluir uma simulação do MySQL. As linhas de Corpo e EstadoCorpo são removidas em cascata (ON DELETE CASCADE). */
 app.MapDelete("/api/universes/{id:int}", (int id) =>
 {
+    /* Cria uma instância do GravadorUniversoBD para acessar o banco de dados e excluir a simulação com o ID informado. */
     using var gravador = new GravadorUniversoBD();
 
     /* Retorna 204 (No Content) se a simulação foi excluída ou 404 (Not Found) se ela não existir. */
@@ -214,12 +211,15 @@ app.MapGet("/api/replay/{id:int}", (int id) =>
 {
     using var gravador = new GravadorUniversoBD();
 
+    /* Busca os dados gerais da simulação (quantidade de iterações e tempo entre iterações) para o replay. */
     var resumo = gravador.ListarSimulacoes().FirstOrDefault(simulacao => simulacao.Id == id);
     if (resumo is null) return Results.NotFound(new { error = "Simulação não encontrada." });
 
+    /* Monta o universo com os corpos do passo 0 gravados no banco, que será usado para o replay. */
     var universe = new Universo { QuantidadeIteracoes = resumo.QuantidadeIteracoes, TempoEntreIteracoes = resumo.TempoEntreIteracoes };
     foreach (var corpo in gravador.CarregarPasso(id, 0)) universe.AdicionarCorpo(corpo);
 
+    /* Valida os corpos do universo carregado para garantir que todos os parâmetros estejam dentro dos limites aceitáveis. */
     return Results.Ok(new
     {
         nome = resumo.Nome,
@@ -345,6 +345,8 @@ record Snapshot(
         /* Valida os parâmetros do Snapshot antes de criar o Universo. */
         if (QuantidadeIteracoes < 1 || QuantidadeIteracoes > 1000000) throw new ArgumentException("Use de 1 a 1.000.000 iterações.");
 
+        /* Valida o tempo entre iterações, garantindo que seja finito e esteja dentro do 
+         * intervalo aceitável (0,001 a 86.400 segundos). */
         if (!double.IsFinite(TempoEntreIteracoes) || TempoEntreIteracoes < .001 || TempoEntreIteracoes > 86400)
             throw new ArgumentException("O passo de tempo deve estar entre 0,001 e 86.400 segundos.");
 

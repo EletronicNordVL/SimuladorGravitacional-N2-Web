@@ -1,3 +1,4 @@
+/*  Funções e variáveis globais para o simulador gravitacional em JavaScript, incluindo manipulação de DOM, controle de simulação, renderização de corpos e rastros, e comunicação com a API do servidor. */
 'use strict';
 
 /* Função auxiliar para obter elementos do DOM pelo ID. */
@@ -141,6 +142,7 @@ async function generate(ask = true) {
     pause();
     transition = true;
     setControls();
+/* Bloco de Try-Catch-Finally para lidar com a geração do universo aleatório, incluindo validação da quantidade de corpos e atualização do estado da simulação. */
     try {
         const count = Number($('body-count').value);
         if (!Number.isInteger(count) || count < 1) throw new Error('A quantidade de corpos deve ser maior que zero.');
@@ -177,6 +179,7 @@ async function advance(steps = 1) {
             trails[index].push({ x: body.posX, y: body.posY });
             if (trails[index].length > 800) trails[index].shift();
         });
+/* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
         updateUI(performance.now() - lastListUpdate > 400);
         if (state.iteration >= state.quantidadeIteracoes) { pause(); toast('Simulação concluída. Você pode salvar o resultado ou reiniciar.'); }
     } catch (error) { pause(); toast(error.message, true); }
@@ -227,6 +230,8 @@ async function replayAdvance(steps) {
         if (!quadro || quadro.corpos.length !== state.corpos.length) throw new Error('Passo não encontrado no banco de dados.');
         state.iteration = passo;
         state.elapsed = quadro.tempo;
+/* Atualiza as posições e velocidades dos corpos com base nos dados do quadro do replay, 
+mantendo os rastros das trajetórias. */
         quadro.corpos.forEach(([posX, posY, velX, velY], index) => {
             Object.assign(state.corpos[index], { posX, posY, velX, velY });
             if (!trails[index]) trails[index] = [];
@@ -236,6 +241,7 @@ async function replayAdvance(steps) {
         replay.buffer.delete(passo);
         replay.pos = passo;
     }
+/* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
     updateUI(performance.now() - lastListUpdate > 400);
     if (replay.pos >= replay.max) { pause(); toast('Replay concluído.'); }
 }
@@ -307,6 +313,8 @@ function renderBodyList() {
             list.append(button);
         });
     }
+
+/* Atualiza a seleção e os detalhes do corpo na lista, destacando o corpo selecionado e exibindo seu nome e massa. */
     state.corpos.forEach((body, index) => {
         const button = list.children[index];
         button.classList.toggle('selected', index === selected);
@@ -418,17 +426,21 @@ canvas.addEventListener('wheel', event => {
     const after = toWorld(x, y);
     center.x += before.x - after.x; center.y += before.y - after.y;
 }, { passive: false });
+/* Observador de eventos para iniciar o arrasto da visualização quando o usuário pressiona o botão esquerdo do 
+mouse, armazenando a posição inicial do ponteiro e a posição central atual. */
 canvas.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     dragging = { x: event.clientX, y: event.clientY, center: { ...center } }; moved = false;
     canvas.setPointerCapture(event.pointerId);
 });
+/* Observador de eventos para mover a visualização enquanto o usuário arrasta o mouse, atualizando a posição central com base no deslocamento do ponteiro. */
 canvas.addEventListener('pointermove', event => {
     if (!dragging) return;
     const dx = event.clientX - dragging.x, dy = event.clientY - dragging.y;
     if (Math.hypot(dx, dy) > 4) moved = true;
     center.x = dragging.center.x - dx / pixelScale(); center.y = dragging.center.y + dy / pixelScale();
 });
+/* Observador de eventos para liberar o arrasto e selecionar corpos ao soltar o botão do mouse, se não houver movimento significativo. */
 canvas.addEventListener('pointerup', event => {
     if (!dragging) return;
     if (!moved && state) {
@@ -439,6 +451,8 @@ canvas.addEventListener('pointerup', event => {
     }
     dragging = null;
 });
+/* Observador de eventos para cancelar o arrasto da visualização se o ponteiro for cancelado, 
+garantindo que a interação seja interrompida corretamente. */
 canvas.addEventListener('pointercancel', () => { dragging = null; });
 
 /* Função para abrir o diálogo de edição ou adição de um corpo, preenchendo os campos com os valores atuais do corpo selecionado ou com valores padrão para um novo corpo. */
@@ -448,6 +462,8 @@ function openBody(index = null) {
     const body = index === null ? { nome: `Corpo ${state.corpos.length + 1}`, massa: 5e24, densidade: 4500, posX: 3e9, posY: 0, velX: 0, velY: 100 } : state.corpos[index];
     const fields = { name: 'nome', mass: 'massa', density: 'densidade', x: 'posX', y: 'posY', vx: 'velX', vy: 'velY' };
     Object.entries(fields).forEach(([field, key]) => { $(`body-${field}`).value = body[key]; });
+/* Atualiza o título do diálogo, limpa mensagens de erro, habilita ou desabilita o botão de remoção 
+com base na quantidade de corpos e exibe o diálogo para edição ou adição do corpo. */
     $('body-dialog-title').textContent = index === null ? 'Adicionar corpo' : 'Editar corpo';
     $('body-form-error').textContent = '';
     $('remove-body').hidden = index === null;
@@ -485,6 +501,8 @@ $('body-form').addEventListener('submit', event => {
         commitEdit(); $('body-dialog').close(); toast('Corpo atualizado. As condições iniciais foram redefinidas.');
     } catch (error) { $('body-form-error').textContent = error.message; }
 });
+/* Observador de clique no botão de remoção de corpo, que remove o corpo selecionado do estado da simulação, 
+atualiza a seleção e a interface, e exibe uma mensagem de confirmação. */
 $('remove-body').addEventListener('click', () => {
     if (editing === null || state.corpos.length <= 1) return;
     state.corpos.splice(editing, 1); selected = Math.min(editing, state.corpos.length - 1);
@@ -506,11 +524,15 @@ async function loadLibrary() {
         const files = await api('/api/universes', undefined, 'GET');
         $('saved-list').replaceChildren();
         if (!files.length) { const p = document.createElement('p'); p.className = 'empty-state'; p.textContent = 'Ainda não há universos salvos. Salve seu primeiro experimento para encontrá-lo aqui.'; $('saved-list').append(p); }
+/* Itera sobre cada arquivo salvo, criando elementos de interface para exibir o nome, data de modificação 
+e botões para abrir, excluir ou iniciar o replay da simulação. */
         files.forEach(file => {
             const row = document.createElement('div'); row.className = 'saved-item';
             const content = document.createElement('div'); const name = document.createElement('strong'); name.textContent = file.name;
             const date = document.createElement('small'); date.textContent = new Date(file.modified).toLocaleString('pt-BR'); content.append(name, date);
             const open = document.createElement('button'); open.className = 'button button-outline'; open.textContent = 'Abrir';
+/* Observador de clique no botão "Abrir", que solicita confirmação do usuário se houver um estado existente, substitui o 
+estado atual da simulação pelo arquivo selecionado e exibe uma mensagem de sucesso ou erro. */
             open.addEventListener('click', async () => {
                 if (busy || transition) return;
                 $('library-dialog').close();
@@ -520,6 +542,8 @@ async function loadLibrary() {
                 catch (error) { toast(error.message, true); }
                 finally { transition = false; setControls(); }
             });
+/* Observador de clique no botão "Excluir", que solicita confirmação do usuário antes de excluir o arquivo 
+selecionado do servidor, atualiza a lista de arquivos e exibe uma mensagem de sucesso ou erro. */
             const remove = document.createElement('button'); remove.className = 'icon-button'; remove.textContent = '×'; remove.setAttribute('aria-label', `Excluir ${file.name}`);
             remove.addEventListener('click', async () => {
                 $('library-dialog').close();
@@ -542,7 +566,7 @@ substituindo o estado atual da simulação pelo replay selecionado. */
                 catch (error) { toast(error.message, true); }
                 finally { transition = false; setControls(); }
             });
-
+/* Adiciona os elementos de conteúdo, botões de abrir, excluir e replay à linha da lista de arquivos salvos, e anexa a linha à lista de arquivos na interface. */
             row.append(content, open, remove); $('saved-list').append(row);
         });
     } catch (error) { toast(error.message, true); }
@@ -563,6 +587,7 @@ async function exportFile() {
     finally { transition = false; setControls(); }
 }
 
+/* Observador de mudança no input de arquivo para importação, que lê o arquivo selecionado, valida seu tamanho e conteúdo, solicita confirmação do usuário se houver um estado existente, e aplica o estado importado à simulação. */
 $('import-file').addEventListener('change', async event => {
     const file = event.target.files[0]; event.target.value = '';
     if (!file || busy || transition) return;
@@ -585,6 +610,9 @@ for (const id of ['iterations', 'timestep']) $(id).addEventListener('change', ()
     try { readSettings(); initialState.quantidadeIteracoes = state.quantidadeIteracoes; initialState.tempoEntreIteracoes = state.tempoEntreIteracoes; updateUI(); }
     catch (error) { toast(error.message, true); }
 });
+/* Observadores de clique nos botões da interface, que chamam as funções correspondentes para gerar uma nova 
+simulação, reproduzir a simulação, avançar um passo, redefinir a simulação, ajustar o zoom, abrir o diálogo de 
+adição/edição de corpos, salvar, exportar, importar e abrir a biblioteca de universos salvos. */
 $('generate-button').addEventListener('click', () => generate());
 $('new-button').addEventListener('click', () => generate());
 $('retry-button').addEventListener('click', () => generate(false));
