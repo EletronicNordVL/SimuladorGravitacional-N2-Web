@@ -16,9 +16,11 @@ Nesta versão **Web**, o sistema une o motor físico e transacional de alta perf
    - Exibição direta no painel do tempo de processamento em milissegundos obtido pelo **`Stopwatch`** na execução paralela.
 
 2. **Backend API RESTful em C# (ASP.NET Core)**:
-   - `POST /api/simular`: Dispara a execução física paralelizada, registra os passos no MySQL e retorna as métricas de tempo e o estado inicial.
-   - `GET /api/simulacoes`: Lista todas as simulações armazenadas no MySQL com seus parâmetros e datas.
-   - `GET /api/simulacao/{id}`: Recupera o histórico de posições do MySQL para animação de *Replay* frame a frame no navegador.
+   - `POST /api/simulation/step`: Avança N iterações (paralelo, com subpassos nas colisões). Se o universo estiver sendo gravado (`idSimulacao`), grava no MySQL o estado de todos os corpos em cada iteração.
+   - `POST /api/universes/save`: Grava o universo atual no MySQL (passo 0) e devolve o `id`. Também é o que inicia a gravação de uma simulação.
+   - `GET /api/universes`: Lista as simulações armazenadas no MySQL.
+   - `GET /api/replay/{id}`: Dados gerais, último passo gravado e estado inicial de uma simulação.
+   - `GET /api/replay/{id}/frames?inicio=&quantidade=`: Bloco de passos gravados, para o *Replay* frame a frame no navegador.
 
 3. **Computação Paralela (`Parallel.For`)**:
    - Processamento de alta performance para o cálculo das forças resultantes entre todos os pares de corpos celestes via `System.Threading.Tasks`.
@@ -28,7 +30,7 @@ Nesta versão **Web**, o sistema une o motor físico e transacional de alta perf
    - Estrutura relacional normalizada: `Simulacao` (Metadados), `Corpo` (Propriedades físicas) e `EstadoCorpo` (Histórico temporal).
    - Gerenciamento com **`MySqlTransaction`** para garantir a atomicidade das gravações via ADO.NET.
    - Integridade referencial com **`ON DELETE CASCADE`** para exclusão segura de simulações.
-   - **Índice Composto**: `idx_estado_corpo_passo (corpo_id, num_passo)` otimizando as consultas de leitura do *Replay*.
+   - **Índice Composto**: `idx_estado_corpo_passo (corpo_id, num_passo)` (índice **único**, que também impede passos duplicados)
 
 5. **Stored Procedure de Limpeza Automática**:
    - Procedure `sp_limpar_simulacoes_antigas` para expurgo automático de registros com mais de 30 dias de criação.

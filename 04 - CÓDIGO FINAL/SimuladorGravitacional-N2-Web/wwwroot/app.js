@@ -13,6 +13,10 @@ let width = 1, height = 1, zoom = 1, center = { x: 0, y: 0 }, extent = 7e9;
 let trails = [], editing = null, timer = null, toastTimer = null, dragging = null;
 let moved = false, lastListUpdate = 0;
 
+/* Dados do replay em andamento (null quando a tela está em simulação normal) como o id da simulação gravada, o
+ * último passo gravado, passo atual e os quadros já baixados do banco que ainda não foram exibidos. */
+let replay = null;
+
 /* Função auxiliar para clonar objetos de forma profunda, garantindo que alterações no estado atual não afetem o estado inicial. */
 const clone = value => structuredClone(value);
 const color = index => colors[index % colors.length];
@@ -86,12 +90,18 @@ function setControls() {
     $('step-button').disabled = blocked || running || state?.iteration >= state?.quantidadeIteracoes;
     $('iterations').disabled = running || busy || transition;
     $('timestep').disabled = running || busy || transition;
+
+    /* No replay só é possível reproduzir o que foi gravado: não há edição, salvamento nem mudança de parâmetros. */
+    if (replay) {
+        for (const id of ['save-button', 'export-button', 'add-body', 'edit-body', 'import-button', 'iterations', 'timestep', 'record'])
+            $(id).disabled = true;
+    } else $('record').disabled = running || busy || transition;
 }
 
 /* Função para atualizar o status da simulação e os controles da interface. */
 function updateStatus() {
     const completed = state && state.iteration >= state.quantidadeIteracoes;
-    $('status').textContent = running ? 'EM MOVIMENTO' : completed ? 'CONCLUÍDO' : 'PAUSADO';
+    $('status').textContent = (replay ? 'REPLAY · ' : '') + (running ? 'EM MOVIMENTO' : completed ? 'CONCLUÍDO' : 'PAUSADO');
     $('status').classList.toggle('running', running);
     $('play-button').replaceChildren();
     const icon = document.createElement('span');
@@ -111,16 +121,17 @@ function pause() {
 /* Função para aplicar um novo estado à simulação, redefinir as condições iniciais e atualizar a interface. */
 function applyState(next, title = 'Universo personalizado') {
     pause();
-    state = next;
-    initialState = clone(next);
-    selected = 0;
-    trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]);
+    replay = null; /* Qualquer novo estado (gerar, abrir, importar) encerra o modo replay. */
+    state = next; /* O estado atual é substituído pelo novo estado fornecido. */
+    initialState = clone(next); /* O estado inicial é atualizado para o novo estado, permitindo reinicializações. */
+    selected = 0; /* O corpo selecionado é redefinido para o primeiro corpo da lista. */
+    trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]); /* Os rastros dos corpos são reiniciados com base nas posições iniciais do novo estado. */
     $('universe-title').textContent = title;
     $('iterations').value = state.quantidadeIteracoes;
     $('timestep').value = state.tempoEntreIteracoes;
     $('viewport-error').hidden = true;
-    fit();
-    updateUI(true);
+    fit(); /* Ajusta a visualização para caber todos os corpos na tela. */
+    updateUI(true); /* Atualiza a interface do usuário com base no novo estado, incluindo métricas, lista de corpos e detalhes do corpo selecionado. */
 }
 
 /* Função para gerar um novo universo aleatório, com confirmação do usuário se houver um estado existente. */
@@ -156,6 +167,8 @@ async function advance(steps = 1) {
     busy = true;
     setControls();
     try {
+        /* No replay, os passos vêm do banco de dados em vez de serem calculados. */
+        if (replay) { await replayAdvance(steps); return; }
         readSettings();
         const next = await api('/api/simulation/step', { state, steps });
         state = next;
@@ -170,6 +183,63 @@ async function advance(steps = 1) {
     finally { busy = false; setControls(); }
 }
 
+/* Se a opção "Gravar iterações no banco" estiver ligada, cria a simulação no MySQL (estado inicial = passo 0) antes da
+ * primeira iteração. A partir daí, cada chamada de /api/simulation/step grava os passos no banco.
+ * Se o banco estiver indisponível, a simulação segue normalmente, só que sem gravar. */
+async function ensureRecording() {
+    if (!$('record').checked || replay || state.idSimulacao > 0 || state.iteration !== 0) return;
+    try {
+        const saved = await api('/api/universes/save', state);
+        state.idSimulacao = saved.id;
+        toast('Gravando cada iteração no banco de dados.');
+    } catch (error) {
+        $('record').checked = false;
+        toast(`${error.message} A simulação seguirá sem gravar no banco.`, true);
+    }
+}
+
+/* Abre o replay de uma simulação gravada: carrega o estado inicial (passo 0) e deixa os passos seguintes para serem
+ * buscados em blocos no banco enquanto o replay é reproduzido. */
+async function openReplay(file) {
+    const meta = await api(`/api/replay/${file.id}`, undefined, 'GET');
+    if (meta.maxPasso < 1) throw new Error('Esta simulação tem só o estado inicial gravado. Rode uma simulação com "Gravar iterações no banco" ligado.');
+    meta.state.quantidadeIteracoes = meta.maxPasso;
+    applyState(meta.state, `Replay — ${file.name}`);
+    replay = { id: file.id, max: meta.maxPasso, pos: 0, buffer: new Map() };
+    updateUI(true);
+    toast(`Replay carregado: ${meta.maxPasso.toLocaleString('pt-BR')} iterações gravadas. Pressione ▶ para reproduzir.`);
+}
+
+/* Busca no banco o próximo bloco de passos. Quanto mais corpos, menos passos por bloco, para o bloco não ficar enorme. */
+async function replayFetch(inicio) {
+    const quantidade = Math.max(10, Math.min(300, Math.floor(8000 / state.corpos.length)));
+    const quadros = await api(`/api/replay/${replay.id}/frames?inicio=${inicio}&quantidade=${quantidade}`, undefined, 'GET');
+    for (const quadro of quadros) replay.buffer.set(quadro.passo, quadro);
+}
+
+/* Avança o replay em "steps" passos onde ele aplica ao estado atual 
+as posições e velocidades gravadas e atualiza as trajetórias. */
+async function replayAdvance(steps) {
+    const alvo = Math.min(replay.pos + steps, replay.max);
+    for (let passo = replay.pos + 1; passo <= alvo; passo++) {
+        if (!replay.buffer.has(passo)) await replayFetch(passo);
+        const quadro = replay.buffer.get(passo);
+        if (!quadro || quadro.corpos.length !== state.corpos.length) throw new Error('Passo não encontrado no banco de dados.');
+        state.iteration = passo;
+        state.elapsed = quadro.tempo;
+        quadro.corpos.forEach(([posX, posY, velX, velY], index) => {
+            Object.assign(state.corpos[index], { posX, posY, velX, velY });
+            if (!trails[index]) trails[index] = [];
+            trails[index].push({ x: posX, y: posY });
+            if (trails[index].length > 800) trails[index].shift();
+        });
+        replay.buffer.delete(passo);
+        replay.pos = passo;
+    }
+    updateUI(performance.now() - lastListUpdate > 400);
+    if (replay.pos >= replay.max) { pause(); toast('Replay concluído.'); }
+}
+
 /*  Função de loop assíncrono que avança a simulação continuamente enquanto estiver em execução, respeitando a velocidade definida pelo usuário. */
 async function loop() {
     if (!running) return;
@@ -177,13 +247,17 @@ async function loop() {
     if (running) timer = setTimeout(loop, 40);
 }
 
-/* Função para iniciar ou pausar a simulação, dependendo do estado atual, e atualizar a interface. */
-function play() {
+/* Função para iniciar a simulação, alternando entre iniciar, pausar e reiniciar com base no estado atual. */
+async function play() {
     if (!state || transition) return;
     if (running) { pause(); return; }
     if (busy) return;
-    try { readSettings(); } catch (error) { toast(error.message, true); return; }
+    try { if (!replay) readSettings(); } catch (error) { toast(error.message, true); return; }
     if (state.iteration >= state.quantidadeIteracoes) reset();
+
+    /* Cria a simulação no banco (se a gravação estiver ligada). O busy evita cliques duplicados enquanto isso acontece. */
+    busy = true; setControls();
+    try { await ensureRecording(); } finally { busy = false; }
     running = true;
     updateStatus();
     loop();
@@ -191,8 +265,9 @@ function play() {
 
 /* Função para redefinir a simulação para o estado inicial, pausando-a e atualizando a interface. */
 function reset() {
-    if (busy || transition || !initialState) return;
+    if (busy || transition || !initialState) return; /* Se não houver estado inicial, não há como reiniciar. */
     pause();
+    if (replay) { replay.pos = 0; replay.buffer.clear(); } /* O replay volta ao passo 0 imediatamente. */
     state = clone(initialState);
     trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]);
     $('iterations').value = state.quantidadeIteracoes;
@@ -383,11 +458,12 @@ function openBody(index = null) {
 
 /* Função para confirmar a edição ou adição de um corpo, validando os campos e atualizando o estado da simulação com as novas informações do corpo. */
 function commitEdit() {
-    state.iteration = 0; state.elapsed = 0;
-    initialState = clone(state);
-    trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]);
-    $('universe-title').textContent = 'Universo personalizado';
-    fit(); updateUI(true);
+    state.iteration = 0; state.elapsed = 0; /* Reinicia a simulação, pois as condições iniciais mudaram. */
+    state.idSimulacao = 0; /* Corpos editados: a gravação em andamento não vale mais; a próxima simulação cria outra. */
+    initialState = clone(state); /* Atualiza o estado inicial para refletir as alterações feitas nos corpos. */
+    trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]); /* Reinicia os rastros dos corpos com base nas novas posições iniciais. */
+    $('universe-title').textContent = 'Universo personalizado'; 
+    fit(); updateUI(true); /* Atualiza a interface do usuário para refletir as alterações feitas nos corpos, incluindo a lista de corpos e os detalhes do corpo selecionado. */
 }
 
 /* Observador de envio do formulário de corpo, que lê os valores dos campos, valida-os e atualiza o estado da simulação com as informações do corpo adicionado ou editado. */
@@ -453,6 +529,20 @@ async function loadLibrary() {
                 }
                 await loadLibrary(); $('library-dialog').showModal();
             });
+
+/* Função para criar um botão de replay que permite ao usuário iniciar a reprodução de uma simulação salva, 
+substituindo o estado atual da simulação pelo replay selecionado. */
+            const replayButton = document.createElement('button'); replayButton.className = 'button button-outline'; replayButton.textContent = '▶ Replay';
+            replayButton.addEventListener('click', async () => {
+                if (busy || transition) return;
+                $('library-dialog').close();
+                if (state && !await confirmAction('Iniciar replay?', 'O universo atual será substituído pelo replay da simulação selecionada.')) return;
+                transition = true; setControls();
+                try { await openReplay(file); }
+                catch (error) { toast(error.message, true); }
+                finally { transition = false; setControls(); }
+            });
+
             row.append(content, open, remove); $('saved-list').append(row);
         });
     } catch (error) { toast(error.message, true); }

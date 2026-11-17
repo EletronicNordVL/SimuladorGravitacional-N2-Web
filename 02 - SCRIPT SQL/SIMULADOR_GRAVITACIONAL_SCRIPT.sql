@@ -92,6 +92,9 @@ EXPLAIN SELECT * FROM EstadoCorpo WHERE corpo_id = 1 AND num_passo = 50;
 DESCRIBE EstadoCorpo;
 DESCRIBE Corpo;
 
+/* F.2) Um Select para testar o Replay */
+SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = 300);
+
 /* G) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
 DELIMITER $$
 CREATE PROCEDURE sp_limpar_simulacoes_antigas()

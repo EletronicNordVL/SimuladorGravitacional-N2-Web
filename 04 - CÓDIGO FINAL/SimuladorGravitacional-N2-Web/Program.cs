@@ -86,6 +86,12 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
 
     /* Calcula o número de passos a serem executados, garantindo que não ultrapasse o número total de iterações do universo. */
     var steps = Math.Min(request.Steps, universe.QuantidadeIteracoes - request.State.Iteration);
+
+    /* Se o universo está sendo gravado (IdSimulacao > 0), o gravador retoma a simulação que a tela criou antes
+     * da primeira iteração. Os corpos são recriados a cada requisição, então o gravador refaz o mapa de IDs. */
+    using var gravador = request.State.IdSimulacao > 0 ? new GravadorUniversoBD() : null;
+    gravador?.RetomarSimulacao(request.State.IdSimulacao, universe.Corpos, request.State.Iteration);
+
     /* O estado pode ter sido editado na tela (massa, posição...): recalcula forças e acelerações antes do primeiro passo. */
     universe.CalcularForcas();
     for (var i = 0; i < steps; i++)
@@ -95,9 +101,29 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
         ValidateBodies(universe.Corpos);
     }
 
-    /* Retorna o estado atualizado do universo após os passos executados (as forças já estão atualizadas). */
+    /* O estado pode ter sido editado na tela (massa, posição...): recalcula forças e acelerações antes do primeiro passo. */
+    universe.CalcularForcas();
+    for (var i = 0; i < steps; i++)
+    {
+        /* Avança uma iteração (posições Velocity Verlet, colisões e forças), com subpassos se houver corpos próximos. */
+        universe.AvancarIteracao(universe.TempoEntreIteracoes);
+        ValidateBodies(universe.Corpos);
+
+        /* Grava no banco o estado de TODOS os corpos nesta iteração (posição, velocidade, força e aceleração). */
+        gravador?.GravarPasso(
+            request.State.Iteration + i + 1,
+            request.State.Elapsed + (i + 1) * universe.TempoEntreIteracoes,
+            universe.Corpos);
+    }
+
+    /* Grava o que sobrou no buffer e fecha a conexão de gravação. */
+    gravador?.FinalizarSimulacao();
+
+    /* Retorna o estado atualizado do universo após os passos executados (as forças já estão atualizadas).
+     * O IdSimulacao volta na resposta para que a tela continue gravando na mesma simulação. */
     return Snapshot.From(universe, request.State.Iteration + steps,
-        request.State.Elapsed + steps * universe.TempoEntreIteracoes);
+        request.State.Elapsed + steps * universe.TempoEntreIteracoes,
+        request.State.IdSimulacao);
 });
 
 /* Rota para listar todas as simulações salvas no banco de dados. */
@@ -166,7 +192,7 @@ app.MapGet("/api/universes/{id:int}", (int id) =>
     /* Valida os corpos do universo carregado para garantir que todos os parâmetros estejam dentro dos limites aceitáveis. */
     ValidateBodies(universe.Corpos);
     universe.CalcularForcas();
-    var state = Snapshot.From(universe, 0, 0, id);
+    var state = Snapshot.From(universe, 0, 0);
     state.ToUniverse();
     return Results.Ok(state);
 });
@@ -180,6 +206,36 @@ app.MapDelete("/api/universes/{id:int}", (int id) =>
     return gravador.ExcluirSimulacao(id)
         ? Results.NoContent()
         : Results.NotFound(new { error = "Simulação não encontrada." });
+});
+
+/*  Rota que retorna os dados gerais de uma simulação gravada para o replay como o nome, o último passo gravado e o estado
+ *  inicial (passo 0), que traz os corpos com nome, massa e densidade. Os passos seguintes vêm da rota /frames. */
+app.MapGet("/api/replay/{id:int}", (int id) =>
+{
+    using var gravador = new GravadorUniversoBD();
+
+    var resumo = gravador.ListarSimulacoes().FirstOrDefault(simulacao => simulacao.Id == id);
+    if (resumo is null) return Results.NotFound(new { error = "Simulação não encontrada." });
+
+    var universe = new Universo { QuantidadeIteracoes = resumo.QuantidadeIteracoes, TempoEntreIteracoes = resumo.TempoEntreIteracoes };
+    foreach (var corpo in gravador.CarregarPasso(id, 0)) universe.AdicionarCorpo(corpo);
+
+    return Results.Ok(new
+    {
+        nome = resumo.Nome,
+        maxPasso = gravador.ObterUltimoPasso(id),
+        state = Snapshot.From(universe, 0, 0)
+    });
+});
+
+/*  Rota que retorna um bloco de passos consecutivos de uma simulação gravada (de "inicio" até "inicio + quantidade - 1").
+ *  Cada quadro traz só o que a tela precisa para desenhar: posição e velocidade de cada corpo. */
+app.MapGet("/api/replay/{id:int}/frames", (int id, int inicio, int quantidade) =>
+{
+    if (inicio < 0 || quantidade < 1 || quantidade > 500) throw new ArgumentException("Intervalo de replay inválido.");
+
+    using var gravador = new GravadorUniversoBD();
+    return Results.Ok(gravador.CarregarQuadros(id, inicio, quantidade));
 });
 
 /*  Rota para exportar o estado atual do universo em um arquivo de texto. */

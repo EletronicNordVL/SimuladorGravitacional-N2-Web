@@ -313,6 +313,147 @@ private const int LinhasPorBloco = 500;
         return corpos;
     }
 
+    /* Retorna o número do último passo gravado de uma simulação (0 se só o estado inicial foi gravado).
+ * Todos os corpos têm os mesmos passos, então basta consultar o primeiro corpo: a consulta usa só o
+ * índice (corpo_id, num_passo) e continua rápida mesmo com milhões de linhas. */
+    public int ObterUltimoPasso(int idSimulacao)
+    {
+        string sql = @"
+        SELECT COALESCE(MAX(num_passo), 0) AS ultimo_passo
+        FROM EstadoCorpo
+        WHERE corpo_id = (SELECT MIN(id_corpo) FROM Corpo WHERE id_simulacao = @idSimulacao);";
+
+        using (MySqlConnection conexao = ConexaoBD.ObterConexao())
+        using (MySqlCommand cmd = new MySqlCommand(sql, conexao))
+        {
+            cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
+
+            using (MySqlDataReader reader = cmd.ExecuteReader())
+            {
+                return reader.Read() ? reader.GetInt32("ultimo_passo") : 0;
+            }
+        }
+    }
+
+    /* Retoma a gravação de uma simulação que já foi iniciada (IniciarSimulacao) em uma chamada anterior.
+     * Isso é necessário na API Web, que recria os objetos Corpo a cada requisição HTTP: o mapa de IDs é
+     * refeito associando cada corpo da lista ao ID gravado, na mesma ordem em que foram inseridos.
+     * Também apaga os passos posteriores a "ultimoPasso", o que deixa a chamada repetível: se uma
+     * requisição falhar no meio, repeti-la não gera passos duplicados. */
+    public void RetomarSimulacao(int idSimulacao, List<Corpo> corpos, int ultimoPasso)
+    {
+        List<int> idsCorpos = new List<int>();
+
+        using (MySqlConnection conexao = ConexaoBD.ObterConexao())
+        {
+            /* Lê os IDs dos corpos da simulação, na ordem em que foram gravados. */
+            using (MySqlCommand cmd = new MySqlCommand(
+                "SELECT id_corpo FROM Corpo WHERE id_simulacao = @idSimulacao ORDER BY id_corpo;", conexao))
+            {
+                cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
+
+                using (MySqlDataReader reader = cmd.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        idsCorpos.Add(reader.GetInt32("id_corpo"));
+                    }
+                }
+            }
+
+            /* Se a quantidade de corpos mudou (corpo adicionado ou removido), não é a mesma simulação. */
+            if (idsCorpos.Count != corpos.Count)
+            {
+                throw new ArgumentException(
+                    "Os corpos do universo não coincidem com os da simulação gravada.");
+            }
+
+            /* Remove passos posteriores ao último passo já confirmado (resto de uma tentativa que falhou). */
+            using (MySqlCommand cmd = new MySqlCommand(@"
+                DELETE ec FROM EstadoCorpo ec
+                INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+                WHERE c.id_simulacao = @idSimulacao AND ec.num_passo > @ultimoPasso;", conexao))
+            {
+                cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
+                cmd.Parameters.AddWithValue("@ultimoPasso", ultimoPasso);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        /* Refaz o estado interno do gravador para que GravarPasso volte a funcionar. */
+        mapaIdCorpos.Clear();
+        bufferLinhas.Clear();
+        erroNaGravacao = false;
+        idSimulacaoAtual = idSimulacao;
+
+        for (int i = 0; i < corpos.Count; i++)
+        {
+            mapaIdCorpos[corpos[i]] = idsCorpos[i];
+        }
+    }
+
+    /* Um quadro (frame) do replay: o número do passo, o tempo decorrido e, para cada corpo (na ordem de id_corpo),
+     * os quatro valores que a tela precisa para desenhar: posição X, posição Y, velocidade X e velocidade Y. */
+    public class QuadroReplay
+    {
+        public int Passo { get; set; }
+        public double Tempo { get; set; }
+        public List<double[]> Corpos { get; set; } = new List<double[]>();
+    }
+
+    /* Carrega do banco, em uma única consulta, um bloco de passos consecutivos de uma simulação
+     * (de "passoInicial" até "passoInicial + quantidade - 1"), para o replay no navegador. */
+    public List<QuadroReplay> CarregarQuadros(int idSimulacao, int passoInicial, int quantidade)
+    {
+        List<QuadroReplay> quadros = new List<QuadroReplay>();
+
+        string sql = @"
+        SELECT ec.num_passo, ec.tempo_decorrido,
+               ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
+        FROM EstadoCorpo ec
+        INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+        WHERE c.id_simulacao = @idSimulacao
+          AND ec.num_passo >= @passoInicial
+          AND ec.num_passo < @passoFinal
+        ORDER BY ec.num_passo, c.id_corpo;";
+
+        using (MySqlConnection conexao = ConexaoBD.ObterConexao())
+        using (MySqlCommand cmd = new MySqlCommand(sql, conexao))
+        {
+            cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
+            cmd.Parameters.AddWithValue("@passoInicial", passoInicial);
+            cmd.Parameters.AddWithValue("@passoFinal", passoInicial + quantidade);
+
+            using (MySqlDataReader reader = cmd.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    /* Quando o número do passo muda, começa um novo quadro. */
+                    int passo = reader.GetInt32("num_passo");
+
+                    if (quadros.Count == 0 || quadros[quadros.Count - 1].Passo != passo)
+                    {
+                        quadros.Add(new QuadroReplay
+                        {
+                            Passo = passo,
+                            Tempo = reader.GetDouble("tempo_decorrido")
+                        });
+                    }
+
+                    quadros[quadros.Count - 1].Corpos.Add(new double[]
+                    {
+                        reader.GetDouble("pos_x"),
+                        reader.GetDouble("pos_y"),
+                        reader.GetDouble("vel_x"),
+                        reader.GetDouble("vel_y")
+                    });
+                }
+            }
+        }
+
+        return quadros;
+    }
+
     /* Lista todas as simulações armazenadas no banco de dados, 
      * retornando uma lista de objetos ResumoSimulacao contendo 
      * informações resumidas sobre cada simulação. */
