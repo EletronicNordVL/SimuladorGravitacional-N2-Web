@@ -200,8 +200,22 @@ async function advance(steps = 1) {
     busy = true;
     setControls();
     try {
+
         /* No replay, os passos vêm do banco de dados em vez de serem calculados. */
         if (replay) { await replayAdvance(steps); return; }
+
+        /* Garante que a gravação seja iniciada antes do primeiro passo,
+         * inclusive quando o usuário avança manualmente. */
+        await ensureRecording();
+
+        if ($('record').checked &&
+            !state.idSimulacao &&
+            state.iteration > 0) {
+            throw new Error(
+                'Para gravar as iterações, reinicie o universo e avance com a gravação ligada desde o início.'
+            );
+        }
+
         readSettings();
         const next = await api('/api/simulation/step', { state, steps });
         state = next;
@@ -616,10 +630,13 @@ async function save() {
     pause();
     transition = true;
     setControls();
-
+    /* Solicita confirmação do usuário antes de salvar o universo atual, 
+informando que ele será gravado no banco de dados. */
     try {
         readSettings();
 
+/* Solicita ao usuário um nome para o universo salvo, com validação para garantir que o nome
+ seja válido e não exceda 60 caracteres. */
         const result = await api('/api/universes/save', state);
 
         /* Associa a simulação criada ao universo atual. */
@@ -630,6 +647,8 @@ async function save() {
             corpo.idCorpoBanco = result.corpoIds[index];
         });
 
+/* Exibe uma mensagem de sucesso informando que o universo foi salvo com sucesso, incluindo o nome do universo salvo e 
+indicando que as próximas iterações serão gravadas no banco de dados. */
         toast(`Universo salvo em ${result.name}. As próximas iterações serão gravadas.`);
     }
     catch (error) {
