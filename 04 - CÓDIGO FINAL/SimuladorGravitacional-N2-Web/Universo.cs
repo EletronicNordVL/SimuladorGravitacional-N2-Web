@@ -11,6 +11,9 @@ public class Universo
     /* Constante gravitacional utilizada no cálculo da força entre os corpos. */
     private const double G = 6.674184e-11;
 
+    /* Raio máximo permitido para o universo, em metros. */
+    private const double RaioLimiteUniverso = 1e10;
+
     /* Lista de corpos presentes no universo. */
     public List<Corpo> Corpos { get; private set; }
 
@@ -168,11 +171,48 @@ public class Universo
         });
     }
 
+
+    /* Impede que os corpos escapem indefinidamente do universo. */
+    private void ConterCorposNoUniverso()
+    {
+        foreach (Corpo corpo in Corpos)
+        {
+            double distancia = Math.Sqrt(
+                corpo.PosX * corpo.PosX +
+                corpo.PosY * corpo.PosY
+            );
+
+            double limite = RaioLimiteUniverso - corpo.Raio;
+
+            if (distancia <= limite || distancia == 0)
+                continue;
+
+            /* Direção radial da posição do corpo. */
+            double direcaoX = corpo.PosX / distancia;
+            double direcaoY = corpo.PosY / distancia;
+
+            /* Posiciona o corpo exatamente dentro do limite. */
+            corpo.PosX = direcaoX * limite;
+            corpo.PosY = direcaoY * limite;
+
+            /* Calcula a velocidade na direção do limite. */
+            double velocidadeRadial =
+                corpo.VelX * direcaoX +
+                corpo.VelY * direcaoY;
+
+            /* Reflete somente a componente que aponta para fora. */
+            if (velocidadeRadial > 0)
+            {
+                corpo.VelX -= 2 * velocidadeRadial * direcaoX;
+                corpo.VelY -= 2 * velocidadeRadial * direcaoY;
+            }
+        }
+    }
+
     /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
     public void TratarColisoes()
     {
         bool houveFusao;
-
         do
         {
             houveFusao = false;
@@ -326,6 +366,9 @@ public class Universo
             tempoPosicoes?.Start();
             AtualizarPosicoes(passo);
             tempoPosicoes?.Stop();
+
+            /* Mantém todos os corpos dentro dos limites do universo. */
+            ConterCorposNoUniverso();
 
             /* Trata as colisões entre os corpos após a atualização das posições. */
             tempoColisoes?.Start();
