@@ -220,6 +220,10 @@ async function ensureRecording() {
     try {
         const saved = await api('/api/universes/save', state);
         state.idSimulacao = saved.id;
+        /* Atualiza os IDs dos corpos com os registros criados no banco. */
+        state.corpos.forEach((corpo, index) => {
+            corpo.idCorpoBanco = saved.corpoIds[index];
+        });
         toast('Gravando cada iteração no banco de dados.');
     } catch (error) {
         $('record').checked = false;

@@ -193,7 +193,13 @@ app.MapPost("/api/universes/save", (Snapshot state) =>
     }
 
     /* Retorna o ID e o nome da simulação salva, para que a tela possa continuar gravando na mesma simulação se desejar. */
-    return Results.Ok(new { id, name });
+    return Results.Ok(new {
+        id,
+        name,
+        corpoIds = universe.Corpos
+        .Select(corpo => corpo.IdCorpoBanco)
+        .ToArray()
+    });
 });
 
 /*  Rota para carregar um universo salvo no MySQL. Carrega o passo 0 (condições iniciais) da simulação com o ID informado. */
