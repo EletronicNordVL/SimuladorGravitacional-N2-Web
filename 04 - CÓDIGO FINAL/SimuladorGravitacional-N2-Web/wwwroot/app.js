@@ -77,7 +77,7 @@ function confirmAction(title, message) {
 /* Função para habilitar ou desabilitar os controles da interface com base no estado atual da simulação. */
 function setControls() {
     const blocked = !state || busy || transition;
-    for (const id of ['play-button', 'step-button', 'reset-button', 'save-button', 'export-button', 'add-body', 'edit-body', 'import-button', 'library-button'])
+    for (const id of ['play-button', 'step-button', 'reset-button', 'save-button', 'add-body', 'edit-body', 'library-button'])
         $(id).disabled = blocked;
 
     /* Novo universo e Gerar corpos aleatórios não precisam ser
@@ -94,7 +94,7 @@ function setControls() {
 
     /* No replay só é possível reproduzir o que foi gravado: não há edição, salvamento nem mudança de parâmetros. */
     if (replay) {
-        for (const id of ['save-button', 'export-button', 'add-body', 'edit-body', 'import-button', 'iterations', 'timestep', 'record'])
+        for (const id of ['save-button', 'add-body', 'edit-body', 'iterations', 'timestep', 'record'])
             $(id).disabled = true;
     } else $('record').disabled = running || busy || transition;
 }
@@ -142,11 +142,35 @@ async function generate(ask = true) {
     pause();
     transition = true;
     setControls();
+
 /* Bloco de Try-Catch-Finally para lidar com a geração do universo aleatório, incluindo validação da quantidade de corpos e atualização do estado da simulação. */
     try {
         const count = Number($('body-count').value);
-        if (!Number.isInteger(count) || count < 1) throw new Error('A quantidade de corpos deve ser maior que zero.');
-        const next = await api('/api/universes/create', { count });
+        const iterations = Number($('iterations').value);
+        const timestep = Number($('timestep').value);
+
+        /* Valida os parâmetros de entrada para a geração do universo aleatório, garantindo que a quantidade de corpos, 
+iterações e passo de tempo estejam dentro dos limites aceitáveis. */
+        if (!Number.isInteger(count) || count < 1)
+            throw new Error('A quantidade de corpos deve ser maior que zero.');
+
+/* Valida a quantidade de iterações, garantindo que esteja entre 1 e 1.000.000. */
+        if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1000000)
+            throw new Error('Use de 1 a 1.000.000 iterações.');
+
+/* Valida o passo de tempo, garantindo que seja finito e esteja entre 0,001 e 86.400 segundos. */
+        if (!Number.isFinite(timestep) || timestep < .001 || timestep > 86400)
+            throw new Error('O passo de tempo deve estar entre 0,001 e 86.400 segundos.');
+
+/* Faz uma requisição à API para criar um novo universo aleatório com os parâmetros validados, 
+recebendo o estado inicial do universo criado. */
+        const next = await api('/api/universes/create', {
+            count,
+            iterations,
+            timestep
+        });
+
+/* Aplica o novo estado à simulação, atualizando a interface e redefinindo as condições iniciais. */
         applyState(next, 'Universo aleatório');
     } catch (error) {
         toast(error.message, true);
@@ -544,7 +568,10 @@ estado atual da simulação pelo arquivo selecionado e exibe uma mensagem de suc
             });
 /* Observador de clique no botão "Excluir", que solicita confirmação do usuário antes de excluir o arquivo 
 selecionado do servidor, atualiza a lista de arquivos e exibe uma mensagem de sucesso ou erro. */
-            const remove = document.createElement('button'); remove.className = 'icon-button'; remove.textContent = '×'; remove.setAttribute('aria-label', `Excluir ${file.name}`);
+            const remove = document.createElement('button');
+            remove.className = 'icon-button';
+            remove.textContent = 'Deletar simulação';
+            remove.setAttribute('aria-label', `Excluir ${file.name}`);
             remove.addEventListener('click', async () => {
                 $('library-dialog').close();
                 if (await confirmAction('Excluir simulação?', `${file.name} será excluída do banco de dados. Esta ação não pode ser desfeita.`)) {
@@ -554,54 +581,36 @@ selecionado do servidor, atualiza a lista de arquivos e exibe uma mensagem de su
                 await loadLibrary(); $('library-dialog').showModal();
             });
 
-/* Função para criar um botão de replay que permite ao usuário iniciar a reprodução de uma simulação salva, 
-substituindo o estado atual da simulação pelo replay selecionado. */
-            const replayButton = document.createElement('button'); replayButton.className = 'button button-outline'; replayButton.textContent = '▶ Replay';
+/* Observador de clique no botão "Replay", que solicita confirmação do usuário se houver um estado existente, 
+inicia o replay da simulação selecionada e exibe uma mensagem de sucesso ou erro. */
+            const replayButton = document.createElement('button');
+            replayButton.className = 'button button-outline';
+            replayButton.textContent = '▶ Replay';
+
             replayButton.addEventListener('click', async () => {
                 if (busy || transition) return;
                 $('library-dialog').close();
+/* Solicita confirmação do usuário antes de iniciar o replay da simulação selecionada, informando que o estado atual será substituído. */
                 if (state && !await confirmAction('Iniciar replay?', 'O universo atual será substituído pelo replay da simulação selecionada.')) return;
-                transition = true; setControls();
+
+/* Define a variável de transição como verdadeira para indicar que uma operação de transição está em andamento, e atualiza 
+os controles da interface para refletir esse estado. */
+                transition = true;
+                setControls();
+
+/* Bloco try-catch-finally para abrir o replay da simulação selecionada, lidando com erros e atualizando a interface. */
                 try { await openReplay(file); }
                 catch (error) { toast(error.message, true); }
                 finally { transition = false; setControls(); }
             });
-/* Adiciona os elementos de conteúdo, botões de abrir, excluir e replay à linha da lista de arquivos salvos, e anexa a linha à lista de arquivos na interface. */
-            row.append(content, open, remove); $('saved-list').append(row);
+/*  Adiciona os elementos de conteúdo e botões à linha da lista de arquivos salvos e, em seguida, adiciona a linha à lista na interface. */
+            row.append(content, open, replayButton, remove);
+            $('saved-list').append(row);
+
+/* Catch de erro para lidar com falhas na solicitação de arquivos salvos, exibindo uma mensagem de erro na interface. */
         });
     } catch (error) { toast(error.message, true); }
 }
-
-/* Função para exportar o estado atual da simulação como um arquivo de texto, enviando os dados para o servidor e permitindo que o usuário faça o download do arquivo gerado. */
-async function exportFile() {
-    if (!state || busy || transition) return;
-    pause(); transition = true; setControls();
-    try {
-        readSettings();
-        const response = await fetch('/api/universes/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
-        if (!response.ok) throw new Error((await response.json()).error || 'Não foi possível exportar.');
-        const url = URL.createObjectURL(await response.blob());
-        const link = document.createElement('a'); link.href = url; link.download = 'universo_exportado.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-        toast('Arquivo exportado.');
-    } catch (error) { toast(error.message, true); }
-    finally { transition = false; setControls(); }
-}
-
-/* Observador de mudança no input de arquivo para importação, que lê o arquivo selecionado, valida seu tamanho e conteúdo, solicita confirmação do usuário se houver um estado existente, e aplica o estado importado à simulação. */
-$('import-file').addEventListener('change', async event => {
-    const file = event.target.files[0]; event.target.value = '';
-    if (!file || busy || transition) return;
-    if (file.size > 100000) { toast('O arquivo deve ter no máximo 100 KB.', true); return; }
-    if (state && !await confirmAction('Importar universo?', 'O arquivo importado substituirá o universo atual.')) return;
-    pause(); transition = true; setControls();
-    try {
-        const response = await fetch('/api/universes/import', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: await file.text() });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Arquivo inválido.');
-        applyState(data, file.name); toast('Universo importado com sucesso.');
-    } catch (error) { toast(error.message, true); }
-    finally { transition = false; setControls(); }
-});
 
 /*  Função para ler as configurações de iterações e passo de tempo da interface, validá-las e aplicá-las ao estado da simulação. */
 $('speed').addEventListener('input', () => { $('speed-label').textContent = `${$('speed').value}×`; });
@@ -610,6 +619,7 @@ for (const id of ['iterations', 'timestep']) $(id).addEventListener('change', ()
     try { readSettings(); initialState.quantidadeIteracoes = state.quantidadeIteracoes; initialState.tempoEntreIteracoes = state.tempoEntreIteracoes; updateUI(); }
     catch (error) { toast(error.message, true); }
 });
+
 /* Observadores de clique nos botões da interface, que chamam as funções correspondentes para gerar uma nova 
 simulação, reproduzir a simulação, avançar um passo, redefinir a simulação, ajustar o zoom, abrir o diálogo de 
 adição/edição de corpos, salvar, exportar, importar e abrir a biblioteca de universos salvos. */
@@ -625,8 +635,6 @@ $('fit-button').addEventListener('click', fit);
 $('add-body').addEventListener('click', () => openBody());
 $('edit-body').addEventListener('click', () => openBody(selected));
 $('save-button').addEventListener('click', save);
-$('export-button').addEventListener('click', exportFile);
-$('import-button').addEventListener('click', () => { pause(); $('import-file').click(); });
 $('library-button').addEventListener('click', async () => { if (busy || transition) return; pause(); await loadLibrary(); $('library-dialog').showModal(); });
 $('help-button').addEventListener('click', () => { pause(); $('help-dialog').showModal(); });
 document.querySelectorAll('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));

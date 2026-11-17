@@ -33,7 +33,7 @@
                 <button class="button button-outline full-width" id="generate-button"><span aria-hidden="true">↻</span> Gerar corpos aleatórios</button>
                 <div class="section-rule"></div>
                 <div class="section-heading"><h2>Simulação</h2><span class="subtle-icon">⌁</span></div>
-                <label class="field-label" for="iterations">Limite de iterações</label><input id="iterations" type="number" min="1" max="1000000" value="10000">
+                <label class="field-label" for="iterations">Limite de iterações</label><input id="iterations" type="number" min="1" max="1000000" value="0">
                 <label class="field-label" for="timestep">Passo de tempo <span>s</span></label><input id="timestep" type="number" min="0.001" max="86400" step="any" value="3600"><p class="field-note">Tempo físico avançado a cada iteração.</p>
                 <label class="field-label" for="speed">Velocidade de reprodução <span id="speed-label">1×</span></label>
                 <input id="speed" type="range" min="1" max="10" value="1"><div class="range-labels"><span>1×</span><span>10×</span></div>
@@ -80,7 +80,14 @@
                     <h3 id="detail-name"></h3><dl><div><dt>Massa</dt><dd id="detail-mass"></dd></div><div><dt>Densidade</dt><dd id="detail-density"></dd></div><div><dt>Raio físico</dt><dd id="detail-radius"></dd></div><div><dt>Velocidade</dt><dd id="detail-velocity"></dd></div><div><dt>Posição X</dt><dd id="detail-x"></dd></div><div><dt>Posição Y</dt><dd id="detail-y"></dd></div></dl>
                     <p class="field-note">Os tamanhos visuais são ampliados para facilitar a observação.</p>
                 </section>
-                <div class="files-section"><div class="section-heading"><h2>Seus universos</h2><span class="subtle-icon">▤</span></div><button class="button button-outline full-width" id="save-button">↓ Salvar universo</button><button class="button button-quiet full-width" id="library-button">Abrir universos salvos ↗</button><div class="file-actions"><button class="text-button" id="import-button">Importar .txt</button><span>·</span><button class="text-button" id="export-button">Exportar .txt</button></div><input type="file" id="import-file" accept=".txt,text/plain" hidden></div>
+                <div class="files-section">
+                <div class="section-heading">
+                    <h2>Seus universos</h2>
+                    <span class="subtle-icon">▤</span>
+                </div>
+                <button class="button button-outline full-width" id="save-button">↓ Salvar universo</button>
+                <button class="button button-quiet full-width" id="library-button">Abrir universos salvos ↗</button>
+             </div>
             </aside>
         </div>
         <footer><span><span class="footer-orbit">◎</span> ÓRBITA <span class="footer-separator">/</span> Laboratório de simulação gravitacional</span><span>Construído com curiosidade. Regido pela física.</span></footer>

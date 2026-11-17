@@ -65,13 +65,33 @@ app.MapGet("/api/health", (HttpResponse response) =>
 /*  * Rota para criar um novo universo com corpos aleatórios. */
 app.MapPost("/api/universes/create", (CreateRequest request) =>
 {
-    /* Valida se a requisição contém um número válido de corpos para criar. */
-    if (request.Count < 1) throw new ArgumentException("A quantidade de corpos deve ser maior que zero.");
-    var universe = new Universo { QuantidadeIteracoes = 10000, TempoEntreIteracoes = 3600 };
+    /* Valida os parâmetros da requisição para criar o universo, garantindo que a quantidade de corpos, 
+     * iterações e passo de tempo estejam dentro dos limites aceitáveis. */
+    if (request.Count < 1)
+        throw new ArgumentException("A quantidade de corpos deve ser maior que zero.");
 
-    /* Gera corpos aleatórios no universo e calcula as forças entre eles. */
+    /* Valida a quantidade de iterações, garantindo que esteja entre 1 e 1.000.000. */
+    if (request.Iterations < 1 || request.Iterations > 1000000)
+        throw new ArgumentException("Use de 1 a 1.000.000 iterações.");
+
+    /* Valida o passo de tempo, garantindo que seja finito e esteja entre 0,001 e 86.400 segundos. */
+    if (!double.IsFinite(request.Timestep) ||
+        request.Timestep < .001 || request.Timestep > 86400)
+        throw new ArgumentException("O passo de tempo deve estar entre 0,001 e 86.400 segundos.");
+
+    /* Cria um novo universo com os parâmetros validados e gera corpos aleatórios. */
+    var universe = new Universo
+    {
+        QuantidadeIteracoes = request.Iterations,
+        TempoEntreIteracoes = request.Timestep
+    };
+
+    /* Gera corpos aleatórios no universo, garantindo que cada corpo tenha massa, 
+     * densidade, posição e velocidade dentro dos limites aceitáveis. */
     universe.GerarCorposAleatorios(request.Count);
     universe.CalcularForcas();
+
+    /* Retorna o estado inicial do universo criado, com iteração 0 e tempo decorrido 0. */
     return Snapshot.From(universe, 0, 0);
 });
 
@@ -238,74 +258,16 @@ app.MapGet("/api/replay/{id:int}/frames", (int id, int inicio, int quantidade) =
     return Results.Ok(gravador.CarregarQuadros(id, inicio, quantidade));
 });
 
-/*  Rota para exportar o estado atual do universo em um arquivo de texto. */
-app.MapPost("/api/universes/export", (Snapshot state) =>
-{
-    /* Converte o estado do universo recebido na requisição para um objeto Universo. */
-    var universe = state.ToUniverse();
-
-    /* Cria uma lista de linhas para o arquivo de exportação, começando com o cabeçalho contendo a quantidade de corpos, quantidade de iterações e tempo entre iterações. */
-    var lines = new List<string> { $"{universe.Corpos.Count};{universe.QuantidadeIteracoes};{universe.TempoEntreIteracoes.ToString("R", CultureInfo.InvariantCulture)}" };
-
-    /* Adiciona uma linha para cada corpo no universo, contendo os dados do corpo separados por ponto e vírgula. */
-    lines.AddRange(universe.Corpos.Select(c => string.Join(';', c.Nome,
-        c.Massa.ToString("R", CultureInfo.InvariantCulture), c.Densidade.ToString("R", CultureInfo.InvariantCulture),
-        c.PosX.ToString("R", CultureInfo.InvariantCulture), c.PosY.ToString("R", CultureInfo.InvariantCulture),
-        c.VelX.ToString("R", CultureInfo.InvariantCulture), c.VelY.ToString("R", CultureInfo.InvariantCulture))));
-
-    /* Retorna o arquivo de exportação como um resultado de arquivo, com o conteúdo codificado em UTF-8 e o tipo MIME definido como "text/plain". */
-    return Results.File(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', lines)), "text/plain; charset=utf-8", "universo_exportado.txt");
-});
-
-/*  Rota para importar um universo a partir de um arquivo de texto enviado no corpo da requisição. */
-app.MapPost("/api/universes/import", async (HttpRequest request) =>
-{
-    /* Lê o conteúdo do corpo da requisição como uma string. */
-    using var reader = new StreamReader(request.Body);
-    var content = await reader.ReadToEndAsync();
-
-    /* Valida se o tamanho do arquivo é maior que 100 KB. */
-    if (content.Length > 100000) throw new ArgumentException("Arquivo muito grande (máximo 100 KB).");
-    var lines = content.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
-    /* Valida se o arquivo possui pelo menos duas linhas (uma para o cabeçalho e pelo menos uma para um corpo). */
-    if (lines.Length < 2) throw new ArgumentException("Arquivo de universo inválido.");
-    var header = lines[0].Trim().Split(';');
-
-    /* Valida se o cabeçalho possui exatamente três campos (quantidade de corpos, quantidade de iterações e tempo entre iterações). */
-    if (header.Length != 3) throw new ArgumentException("Cabeçalho inválido.");
-    var count = int.Parse(header[0]);
-
-    /* Valida se a quantidade de corpos é válida (entre 1 e 100) e se o número de linhas no arquivo corresponde à quantidade de corpos especificada. */
-    if (count < 1 || lines.Length != count + 1) throw new ArgumentException("Quantidade de corpos inválida no arquivo.");
-    var state = new Snapshot([], int.Parse(header[1]), Parse(header[2]), 0, 0);
-
-    /* Itera sobre cada linha do arquivo (exceto o cabeçalho) para criar os corpos e adicioná-los ao estado do universo. */
-    foreach (var line in lines.Skip(1))
-    {
-        /* Divide a linha em campos separados por ponto e vírgula e valida se há exatamente sete campos 
-         * (nome, massa, densidade, posição X, posição Y, velocidade X, velocidade Y). */
-        var fields = line.Trim().Split(';');
-        if (fields.Length != 7) throw new ArgumentException("Cada corpo deve ter sete campos.");
-        state.Corpos.Add(new Corpo(fields[0], Parse(fields[1]), Parse(fields[2]), Parse(fields[3]), Parse(fields[4]), Parse(fields[5]), Parse(fields[6])));
-    }
-    /* Converte o estado do universo para um objeto Universo, calcula as forças e retorna o estado atualizado. */
-    var universe = state.ToUniverse();
-    universe.CalcularForcas();
-    return Snapshot.From(universe, 0, 0);
-});
-
 /* Inicia a aplicação web. */
 app.Run();
 
 /* Funções auxiliares. */
-double Parse(string value) => double.Parse(value.Trim().Replace(',', '.'), CultureInfo.InvariantCulture);
 
 /* Função para validar os corpos do universo, garantindo que todos os parâmetros estejam dentro dos limites aceitáveis. */
 static void ValidateBodies(List<Corpo> bodies) => Snapshot.ValidateBodies(bodies);
 
 /* Classes de requisição para a API. */
-record CreateRequest(int Count);
+record CreateRequest(int Count, int Iterations, double Timestep);
 
 /* Classe de requisição para avançar a simulação em um número de passos. */
 record StepRequest(Snapshot State, int Steps);
