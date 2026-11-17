@@ -86,12 +86,11 @@ app.MapPost("/api/universes/create", (CreateRequest request) =>
         TempoEntreIteracoes = request.Timestep
     };
 
-    /* Gera corpos aleatórios no universo, garantindo que cada corpo tenha massa, 
-     * densidade, posição e velocidade dentro dos limites aceitáveis. */
+    /* Gera corpos aleatórios no universo, garantindo que cada corpo tenha massa, densidade, posição e velocidade dentro dos limites aceitáveis. */
     universe.GerarCorposAleatorios(request.Count);
     universe.CalcularForcas();
 
-    /* Retorna o estado inicial do universo criado, com iteração 0 e tempo decorrido 0. */
+    /* Retorna o estado inicial do universo criado, com a iteração e tempo decorrido definidos como zero. */
     return Snapshot.From(universe, 0, 0);
 });
 
