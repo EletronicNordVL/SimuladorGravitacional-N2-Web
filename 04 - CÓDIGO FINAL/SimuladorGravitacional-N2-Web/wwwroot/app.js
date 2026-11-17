@@ -39,6 +39,7 @@ async function api(path, data, method = 'POST') {
         try { const error = await response.json(); message = error.error || error.detail || message; } catch { /* Resposta sem JSON. */ }
         throw new Error(message);
     }
+    /* Retorna null para respostas 204 (No Content) e o JSON para outras respostas bem-sucedidas. */
     return response.status === 204 ? null : response.json();
 }
 
@@ -203,6 +204,7 @@ async function advance(steps = 1) {
             trails[index].push({ x: body.posX, y: body.posY });
             if (trails[index].length > 800) trails[index].shift();
         });
+
 /* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
         updateUI(performance.now() - lastListUpdate > 400);
         if (state.iteration >= state.quantidadeIteracoes) { pause(); toast('Simulação concluída. Você pode salvar o resultado ou reiniciar.'); }
@@ -262,6 +264,7 @@ mantendo os rastros das trajetórias. */
             trails[index].push({ x: posX, y: posY });
             if (trails[index].length > 800) trails[index].shift();
         });
+/* Remove o quadro do buffer após aplicá-lo, liberando memória, e atualiza a posição atual do replay. */
         replay.buffer.delete(passo);
         replay.pos = passo;
     }
@@ -415,6 +418,8 @@ function draw() {
         });
         $('scale-label').textContent = `${sci(70 / pixelScale())} m`;
     }
+
+/* Solicita o próximo frame de animação, garantindo que a função de desenho seja chamada repetidamente para atualizar a visualização. */
     requestAnimationFrame(draw);
 }
 
@@ -450,6 +455,7 @@ canvas.addEventListener('wheel', event => {
     const after = toWorld(x, y);
     center.x += before.x - after.x; center.y += before.y - after.y;
 }, { passive: false });
+
 /* Observador de eventos para iniciar o arrasto da visualização quando o usuário pressiona o botão esquerdo do 
 mouse, armazenando a posição inicial do ponteiro e a posição central atual. */
 canvas.addEventListener('pointerdown', event => {
@@ -457,6 +463,7 @@ canvas.addEventListener('pointerdown', event => {
     dragging = { x: event.clientX, y: event.clientY, center: { ...center } }; moved = false;
     canvas.setPointerCapture(event.pointerId);
 });
+
 /* Observador de eventos para mover a visualização enquanto o usuário arrasta o mouse, atualizando a posição central com base no deslocamento do ponteiro. */
 canvas.addEventListener('pointermove', event => {
     if (!dragging) return;
@@ -464,6 +471,7 @@ canvas.addEventListener('pointermove', event => {
     if (Math.hypot(dx, dy) > 4) moved = true;
     center.x = dragging.center.x - dx / pixelScale(); center.y = dragging.center.y + dy / pixelScale();
 });
+
 /* Observador de eventos para liberar o arrasto e selecionar corpos ao soltar o botão do mouse, se não houver movimento significativo. */
 canvas.addEventListener('pointerup', event => {
     if (!dragging) return;
@@ -473,8 +481,10 @@ canvas.addEventListener('pointerup', event => {
         const hit = candidates.filter(c => Math.hypot(c.p.x - x, c.p.y - y) < visualRadius(c.body) + 12).sort((a, b) => Math.hypot(a.p.x - x, a.p.y - y) - Math.hypot(b.p.x - x, b.p.y - y))[0];
         if (hit) { selected = hit.index; renderBodyList(); renderDetails(); }
     }
+/* Observador de eventos para liberar o arrasto da visualização quando o usuário solta o botão do mouse, garantindo que a interação seja concluída corretamente. */
     dragging = null;
 });
+
 /* Observador de eventos para cancelar o arrasto da visualização se o ponteiro for cancelado, 
 garantindo que a interação seja interrompida corretamente. */
 canvas.addEventListener('pointercancel', () => { dragging = null; });
@@ -525,6 +535,7 @@ $('body-form').addEventListener('submit', event => {
         commitEdit(); $('body-dialog').close(); toast('Corpo atualizado. As condições iniciais foram redefinidas.');
     } catch (error) { $('body-form-error').textContent = error.message; }
 });
+
 /* Observador de clique no botão de remoção de corpo, que remove o corpo selecionado do estado da simulação, 
 atualiza a seleção e a interface, e exibe uma mensagem de confirmação. */
 $('remove-body').addEventListener('click', () => {
@@ -566,6 +577,7 @@ estado atual da simulação pelo arquivo selecionado e exibe uma mensagem de suc
                 catch (error) { toast(error.message, true); }
                 finally { transition = false; setControls(); }
             });
+
 /* Observador de clique no botão "Excluir", que solicita confirmação do usuário antes de excluir o arquivo 
 selecionado do servidor, atualiza a lista de arquivos e exibe uma mensagem de sucesso ou erro. */
             const remove = document.createElement('button');
@@ -637,9 +649,15 @@ $('edit-body').addEventListener('click', () => openBody(selected));
 $('save-button').addEventListener('click', save);
 $('library-button').addEventListener('click', async () => { if (busy || transition) return; pause(); await loadLibrary(); $('library-dialog').showModal(); });
 $('help-button').addEventListener('click', () => { pause(); $('help-dialog').showModal(); });
+
+/* Observadores de eventos para fechar diálogos quando o usuário clica fora do 
+conteúdo ou pressiona a tecla Escape, garantindo uma experiência de usuário consistente. */
 document.querySelectorAll('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } }));
 document.addEventListener('keydown', event => {
+
+    /*  Observador de eventos para capturar pressionamentos de teclas, permitindo controlar a 
+simulação com atalhos de teclado, como pausar, avançar, ajustar o zoom e ajustar a visualização. */
     if (document.querySelector('dialog[open]') || /INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement.tagName)) return;
     if (event.code === 'Space') { event.preventDefault(); play(); }
     if (event.key === '+' || event.key === '=') zoom = Math.min(100, zoom * 1.25);

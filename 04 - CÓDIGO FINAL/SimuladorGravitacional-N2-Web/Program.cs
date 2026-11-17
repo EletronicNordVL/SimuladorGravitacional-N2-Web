@@ -58,6 +58,8 @@ app.UseStaticFiles();
 /*  * Rotas da API: */
 app.MapGet("/api/health", (HttpResponse response) =>
 {
+    /* Retorna informações de saúde da aplicação que incluem status, 
+     * nome da aplicação, caminho de armazenamento e ID do processo. */
     response.Headers.CacheControl = "no-store";
     return new { status = "ok", application = "TrabalhoN1", storagePath = storage, processId = Environment.ProcessId };
 });
@@ -82,6 +84,7 @@ app.MapPost("/api/universes/create", (CreateRequest request) =>
     /* Cria um novo universo com os parâmetros validados e gera corpos aleatórios. */
     var universe = new Universo
     {
+        /* Define a quantidade de iterações e o tempo entre iterações do universo. */
         QuantidadeIteracoes = request.Iterations,
         TempoEntreIteracoes = request.Timestep
     };
@@ -177,6 +180,7 @@ app.MapPost("/api/universes/save", (Snapshot state) =>
     var id = gravador.IniciarSimulacao(name, universe.Corpos, universe.QuantidadeIteracoes, universe.TempoEntreIteracoes);
     try
     {
+        /* Grava o passo 0 da simulação no banco de dados, que representa as condições iniciais do universo. */
         gravador.GravarPasso(0, 0, universe.Corpos);
         gravador.FinalizarSimulacao();
     }
@@ -186,6 +190,7 @@ app.MapPost("/api/universes/save", (Snapshot state) =>
         try { gravador.ExcluirSimulacao(id); } catch { /* melhor esforço: o erro original é o que importa */ }
         throw;
     }
+
     /* Retorna o ID e o nome da simulação salva, para que a tela possa continuar gravando na mesma simulação se desejar. */
     return Results.Ok(new { id, name });
 });
@@ -253,6 +258,7 @@ app.MapGet("/api/replay/{id:int}/frames", (int id, int inicio, int quantidade) =
 {
     if (inicio < 0 || quantidade < 1 || quantidade > 500) throw new ArgumentException("Intervalo de replay inválido.");
 
+    /* Cria uma instância do GravadorUniversoBD para acessar o banco de dados e carregar os quadros da simulação com o ID informado. */
     using var gravador = new GravadorUniversoBD();
     return Results.Ok(gravador.CarregarQuadros(id, inicio, quantidade));
 });
@@ -261,7 +267,6 @@ app.MapGet("/api/replay/{id:int}/frames", (int id, int inicio, int quantidade) =
 app.Run();
 
 /* Funções auxiliares. */
-
 /* Função para validar os corpos do universo, garantindo que todos os parâmetros estejam dentro dos limites aceitáveis. */
 static void ValidateBodies(List<Corpo> bodies) => Snapshot.ValidateBodies(bodies);
 
@@ -300,6 +305,7 @@ record Snapshot(
             elapsed,
             idSimulacao);
     }
+
     /* Converte o Snapshot de volta para um Universo, validando os dados. */
     public Universo ToUniverse()
     {
@@ -321,6 +327,7 @@ record Snapshot(
         foreach (var c in Corpos) u.AdicionarCorpo(c);
         return u;
     }
+
     /* Valida os corpos do universo, garantindo que todos os parâmetros estejam dentro dos limites aceitáveis. */
     public static void ValidateBodies(List<Corpo>? bodies)
     {

@@ -318,15 +318,18 @@ public class Universo
         {
             for (int j = i + 1; j < Corpos.Count; j++)
             {
+                /* Calcula a diferença de posição entre os corpos para determinar a distância entre eles. */
                 double dx = Corpos[j].PosX - Corpos[i].PosX;
                 double dy = Corpos[j].PosY - Corpos[i].PosY;
                 double d = Math.Sqrt(dx * dx + dy * dy);
                 if (d == 0) continue;
 
+                /* Calcula a diferença de velocidade entre os corpos para determinar a velocidade relativa. */
                 double dvx = Corpos[j].VelX - Corpos[i].VelX;
                 double dvy = Corpos[j].VelY - Corpos[i].VelY;
                 double v = Math.Sqrt(dvx * dvx + dvy * dvy);
 
+                /* Calcula o tempo de travessia baseado na distância e velocidade relativa. Se a velocidade for zero, define como infinito. */
                 double tempoTravessia = v > 0 ? d / v : double.MaxValue;
                 double tempoDinamico = Math.Sqrt(d * d * d / (G * (Corpos[i].Massa + Corpos[j].Massa)));
                 passo = Math.Min(passo, fator * Math.Min(tempoTravessia, tempoDinamico));
@@ -350,9 +353,13 @@ public class Universo
         const double fatorSeguranca = 0.02;  /* fração do tempo característico usada em cada subpasso */
         const int maximoSubpassos = 500;     /* limite para que o custo nunca exploda */
 
+        /* Calcula o passo mínimo permitido para cada subpasso, garantindo que não haja mais de maximoSubpassos. */
         double minimo = tempoEntreIteracoes / maximoSubpassos;
         double restante = tempoEntreIteracoes;
 
+        /* Enquanto houver tempo restante para avançar, 
+         * realiza subpassos de atualização de posições, 
+         * tratamento de colisões e cálculo de forças. */
         while (restante > tempoEntreIteracoes * 1e-12)
         {
             tempoForcas?.Start();
@@ -360,18 +367,22 @@ public class Universo
                 Math.Max(PassoSeguro(tempoEntreIteracoes, fatorSeguranca), minimo));
             tempoForcas?.Stop();
 
+            /* Atualiza as posições dos corpos com base no passo calculado. */
             tempoPosicoes?.Start();
             AtualizarPosicoes(passo);
             tempoPosicoes?.Stop();
 
+            /* Trata as colisões entre os corpos após a atualização das posições. */
             tempoColisoes?.Start();
             TratarColisoes();
             tempoColisoes?.Stop();
 
+            /* Recalcula as forças após o tratamento das colisões. */
             tempoForcas?.Start();
             CalcularForcas();
             tempoForcas?.Stop();
 
+            /* Reduz o tempo restante pelo passo que acabou de ser processado. */
             restante -= passo;
         }
     }
