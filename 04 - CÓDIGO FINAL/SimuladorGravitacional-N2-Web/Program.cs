@@ -134,6 +134,7 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
 
     gravador?.FinalizarSimulacao();
 
+    /* Snapshot para a execução do universo */
     return Snapshot.From(universe,
         request.State.Iteration + passosExecutados,
         request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,

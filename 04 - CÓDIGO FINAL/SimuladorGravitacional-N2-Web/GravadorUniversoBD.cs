@@ -424,6 +424,7 @@ private const int LinhasPorBloco = 500;
      * (de "passoInicial" até "passoInicial + quantidade - 1"), para o replay no navegador. */
     public List<QuadroReplay> CarregarQuadros(int idSimulacao, int passoInicial, int quantidade)
     {
+        /* Lista para armazenar os quadros de replay carregados do banco de dados. */
         List<QuadroReplay> quadros = new List<QuadroReplay>();
 
         string sql = @"

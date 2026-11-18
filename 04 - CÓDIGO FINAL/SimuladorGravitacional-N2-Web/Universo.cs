@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using System.Linq;
 namespace TrabalhoN2;
 
 /* Essa classe representa o universo, contendo uma lista de corpos e métodos para calcular forças, atualizar posições e tratar colisões. */
@@ -207,6 +208,67 @@ public class Universo
         }
     }
 
+    /* Detecta colisões mesmo quando os corpos atravessam um ao outro
+     * entre dois subpassos da simulação. */
+    private bool TratarColisoesNoPercurso(
+        double[] posXAnterior,
+        double[] posYAnterior)
+    {
+        for (int i = 0; i < Corpos.Count; i++)
+        {
+            for (int j = i + 1; j < Corpos.Count; j++)
+            {
+                Corpo corpo1 = Corpos[i];
+                Corpo corpo2 = Corpos[j];
+
+                double xInicial = posXAnterior[j] - posXAnterior[i];
+                double yInicial = posYAnterior[j] - posYAnterior[i];
+
+                double xFinal = corpo2.PosX - corpo1.PosX;
+                double yFinal = corpo2.PosY - corpo1.PosY;
+
+                double dx = xFinal - xInicial;
+                double dy = yFinal - yInicial;
+
+                double comprimento = dx * dx + dy * dy;
+
+                double t = comprimento > 0
+                    ? -(xInicial * dx + yInicial * dy) / comprimento
+                    : 0;
+
+                t = Math.Clamp(t, 0, 1);
+
+                double menorX = xInicial + t * dx;
+                double menorY = yInicial + t * dy;
+
+                double somaRaios = corpo1.Raio + corpo2.Raio;
+
+                if (menorX * menorX + menorY * menorY
+                    <= somaRaios * somaRaios)
+                {
+                    /* Reposiciona os corpos no instante aproximado
+                     * em que ocorreu o contato. */
+                    corpo1.PosX = posXAnterior[i]
+                        + (corpo1.PosX - posXAnterior[i]) * t;
+
+                    corpo1.PosY = posYAnterior[i]
+                        + (corpo1.PosY - posYAnterior[i]) * t;
+
+                    corpo2.PosX = posXAnterior[j]
+                        + (corpo2.PosX - posXAnterior[j]) * t;
+
+                    corpo2.PosY = posYAnterior[j]
+                        + (corpo2.PosY - posYAnterior[j]) * t;
+
+                    TratarColisoes();
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
     public void TratarColisoes()
     {
@@ -360,10 +422,19 @@ public class Universo
                 Math.Max(PassoSeguro(tempoEntreIteracoes, fatorSeguranca), minimo));
             tempoForcas?.Stop();
 
+            /* Guarda as posições anteriores para detectar colisões no percurso. */
+            double[] posXAnterior = Corpos.Select(c => c.PosX).ToArray();
+            double[] posYAnterior = Corpos.Select(c => c.PosY).ToArray();
+
             /* Atualiza as posições dos corpos com base no passo calculado. */
             tempoPosicoes?.Start();
             AtualizarPosicoes(passo);
             tempoPosicoes?.Stop();
+
+            /* Detecta colisões ocorridas durante o deslocamento. */
+            tempoColisoes?.Start();
+            TratarColisoesNoPercurso(posXAnterior, posYAnterior);
+            tempoColisoes?.Stop();
 
             /* Mantém todos os corpos dentro dos limites do universo. */
             ConterCorposNoUniverso();
