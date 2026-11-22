@@ -20,6 +20,9 @@ CREATE TABLE Corpo (
 CREATE TABLE EstadoCorpo (
     id_registro BIGINT PRIMARY KEY AUTO_INCREMENT,
     tempo_decorrido DOUBLE NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    massa DOUBLE NOT NULL,
+    densidade DOUBLE NOT NULL,
     pos_x DOUBLE NOT NULL,
     pos_y DOUBLE NOT NULL,
     vel_x DOUBLE NOT NULL,

@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Pasta gerada pelo Iniciar.cmd (copia compilada e logs do servidor local)
+.local-runtime/

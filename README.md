@@ -13,18 +13,22 @@ Nesta versão **Web**, o sistema une o motor físico e transacional de alta perf
 1. **Interface Gráfica Interativa (HTML5 Canvas 2D & JS)**:
    - Renderização fluida de corpos celestes, vetores de movimento e trajetórias de órbita.
    - Controles visuais de simulação: alternância de velocidade, zoom, pausa e reinício.
-   - Exibição direta no painel do tempo de processamento em milissegundos obtido pelo **`Stopwatch`** na execução paralela.
+   - Interruptor **Processamento paralelo (N2)**: desligado, faz os mesmos cálculos em uma única thread, para comparar o desempenho com a versão N1.
 
 2. **Backend API RESTful em C# (ASP.NET Core)**:
-   - `POST /api/simulation/step`: Avança N iterações (paralelo, com subpassos nas colisões). Se o universo estiver sendo gravado (`idSimulacao`), grava no MySQL o estado de todos os corpos em cada iteração.
-   - `POST /api/universes/save`: Grava o universo atual no MySQL (passo 0) e devolve o `id`. Também é o que inicia a gravação de uma simulação.
+   - `POST /api/simulation/start`: Começa uma simulação no servidor a partir do universo da tela. Se a gravação estiver ligada, cria a simulação no MySQL e grava o passo 0.
+   - `POST /api/simulation/{id}/step`: Avança N iterações da simulação guardada no servidor e grava cada uma no MySQL (em segundo plano).
+   - `POST /api/simulation/{id}/stop`: Encerra a simulação e espera todos os passos chegarem ao banco.
+   - `POST /api/universes/save`: Grava o universo atual no MySQL (passo 0) e devolve o `id`.
    - `GET /api/universes`: Lista as simulações armazenadas no MySQL.
    - `GET /api/replay/{id}`: Dados gerais, último passo gravado e estado inicial de uma simulação.
    - `GET /api/replay/{id}/frames?inicio=&quantidade=`: Bloco de passos gravados, para o *Replay* frame a frame no navegador.
 
 3. **Computação Paralela (`Parallel.For`)**:
-   - Processamento de alta performance para o cálculo das forças resultantes entre todos os pares de corpos celestes via `System.Threading.Tasks`.
-   - Execução *thread-safe* sem condições de corrida.
+   - O cálculo das forças entre todos os pares de corpos é dividido entre as threads. Cada thread soma em uma lista própria, juntada no final com `lock`, então cada par é calculado uma vez e não há condição de corrida.
+   - A procura por corpos que colidiram também é feita em paralelo; as fusões são feitas depois, em ordem, e conservam massa e quantidade de movimento.
+   - A posição é atualizada pelo método de Euler semi-implícito.
+   - A gravação no MySQL roda em uma thread separada, em lotes de até 500 linhas por `INSERT`.
 
 4. **Persistência Relacional em MySQL (3ª Forma Normal)**:
    - Estrutura relacional normalizada: `Simulacao` (Metadados), `Corpo` (Propriedades físicas) e `EstadoCorpo` (Histórico temporal).
@@ -72,6 +76,8 @@ O esquema relacional foi projetado em **3ª Forma Normal (3FN)**:
 | FK  corpo_id (INT) ----------------+--> ON DELETE CASCADE
 |     num_passo (INT)                |
 |     tempo_decorrido (DOUBLE)       |
+|     nome (VARCHAR)                 |
+|     massa, densidade (DOUBLE)      |
 |     pos_x, pos_y (DOUBLE)          |
 |     vel_x, vel_y (DOUBLE)          |
 |     forca_x, forca_y (DOUBLE)      |
@@ -98,16 +104,17 @@ DELIMITER ;
 
 ## 📐 Estudo de Volumetria (BD II)
 
-- **Carga Diária Estimada**: 50 simulações/dia com 400 corpos e 100 iterações.
-- **Registros em `EstadoCorpo`**: 50 x 400 x 100 = **2.000.000 registros/dia**.
-- **Consumo Estimado de Disco**: ~200 MB/dia ➔ **~11,06 GB/mês**.
+- **Carga Diária Estimada**: 50 simulações/dia com 400 corpos e 100 iterações (mais o passo 0).
+- **Registros em `EstadoCorpo`**: 50 x 400 x 101 = **2.020.000 registros/dia**.
+- **Consumo Estimado de Disco**: 195 bytes por registro (medido no MySQL, com índices) ➔ ~394 MB/dia ➔ **~11,8 GB/mês**.
+- Detalhes no relatório `05 - DOCUMENTAÇÃO/RELATORIO_COMPARATIVO_N1_N2` (Word e PDF).
 - **Justificativa Técnica**: Valida a chave primária `BIGINT` na tabela `EstadoCorpo`, a otimização com o índice composto `idx_estado_corpo_passo` e a necessidade da Stored Procedure para expurgo periódico.
 
 ## 💻 Como Executar a Aplicação Web
 
 ### Pré-requisitos
-1. **.NET SDK 8.0+ / 10.0** instalado na máquina.
-2. Servidor **MySQL Server 8.0+** ativo.
+1. **.NET SDK 10.0** instalado na máquina.
+2. Servidor **MySQL 8.0+** (ou MariaDB, como o do XAMPP) ativo.
 
 ### Passo a Passo
 
@@ -122,10 +129,9 @@ DELIMITER ;
      `setx SIMULADOR_DB_CONNECTION "Server=localhost;Port=3306;Database=simulador_gravitacional;User ID=SEU_USUARIO;Password=SUA_SENHA;"`
 
 4. **Iniciar a Aplicação Web**:
-   - Execute `dotnet run` no terminal.
-
-5. **Acessar no Navegador**:
-   - Abra o navegador no endereço indicado no terminal.
+   - Dê dois cliques em `04 - CÓDIGO FINAL/SimuladorGravitacional-N2-Web/Iniciar.cmd`. Ele compila o projeto, inicia o servidor em segundo plano e abre o navegador em `http://localhost:5080`.
+   - Para encerrar o servidor, use `Parar.cmd`.
+   - Também é possível rodar com `dotnet run` dentro da pasta do projeto.
 
 ## 🔗 Repositórios do Projeto
 

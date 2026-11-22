@@ -1,8 +1,11 @@
 ﻿using MySql.Data.MySqlClient;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Text;
+using System.Threading.Tasks;
 using TrabalhoN2;
 
 namespace SimuladorGravitacional_N2;
@@ -32,7 +35,26 @@ private const int LinhasPorBloco = 500;
     /* Indica se houve algum erro na gravação. 
      * Se houver, o FinalizarSimulacao não tenta gravar o que sobrou no buffer, 
      * porque provavelmente vai falhar de novo. */
-    private bool erroNaGravacao;
+    private volatile bool erroNaGravacao;
+
+    /* Exceção que causou o erro na gravação, para ser mostrada no FinalizarSimulacao. */
+    private Exception? excecaoGravacao;
+
+    /* Blocos de linhas que já saíram do buffer e estão esperando para ir para o banco.
+     * Quem grava é uma thread separada, assim a simulação não fica parada esperando o MySQL. */
+    private BlockingCollection<List<LinhaEstado>> blocosEsperando = new BlockingCollection<List<LinhaEstado>>();
+
+    /* Thread (Task) que grava os blocos no banco. É criada no primeiro DescarregarBuffer. */
+    private Task? threadGravacao;
+
+    /* Máximo de blocos esperando. Se o banco ficar para trás, a simulação para e espera. */
+    private const int MaximoBlocosEsperando = 20;
+
+    /* true quando o banco não está dando conta: a simulação deve esperar antes do próximo passo. */
+    public bool BancoAtrasado => blocosEsperando.Count >= MaximoBlocosEsperando;
+
+    /* true se a thread de gravação deu erro (a simulação pode continuar sem gravar). */
+    public bool HouveErroGravacao => erroNaGravacao;
 
     /* Cronômetro para medir o tempo total gasto na gravação dos passos da simulação. */
     private readonly Stopwatch cronometroGravacao = new Stopwatch();
@@ -55,12 +77,19 @@ private const int LinhasPorBloco = 500;
         /* Campos públicos para armazenar as informações do estado do corpo em um passo da simulação. */
         public readonly double ForcaX, ForcaY, AceleracaoX, AceleracaoY;
 
+        /* Nome, massa e densidade também são gravados em cada passo, porque mudam quando dois corpos se fundem. */
+        public readonly string Nome;
+        public readonly double Massa, Densidade;
+
         /* Construtor da estrutura LinhaEstado, que inicializa os campos com os valores fornecidos. */
         public LinhaEstado(int corpoId, int numPasso, double tempoDecorrido, Corpo c)
         {
             CorpoId = corpoId;
             NumPasso = numPasso;
             TempoDecorrido = tempoDecorrido;
+            Nome = c.Nome;
+            Massa = c.Massa;
+            Densidade = c.Densidade;
             PosX = c.PosX; PosY = c.PosY;
             VelX = c.VelX; VelY = c.VelY;
             ForcaX = c.ForcaX; ForcaY = c.ForcaY;
@@ -79,6 +108,9 @@ private const int LinhasPorBloco = 500;
         mapaIdCorpos.Clear();
         bufferLinhas.Clear();
         erroNaGravacao = false;
+        excecaoGravacao = null;
+        blocosEsperando = new BlockingCollection<List<LinhaEstado>>();
+        threadGravacao = null;
         cronometroGravacao.Reset();
 
         /* Abre uma conexão com o banco de dados e inicia uma 
@@ -263,7 +295,7 @@ private const int LinhasPorBloco = 500;
          * A consulta seleciona informações como nome, massa, densidade, posição, velocidade, 
          * força e aceleração. */
         string sql = @"
-       SELECT c.id_corpo, c.nome, c.massa, c.densidade,
+       SELECT c.id_corpo, ec.nome, ec.massa, ec.densidade,
        ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
        ec.forca_x, ec.forca_y,
        ec.aceleracao_x, ec.aceleracao_y
@@ -412,12 +444,12 @@ private const int LinhasPorBloco = 500;
     }
 
     /* Um quadro (frame) do replay: o número do passo, o tempo decorrido e, para cada corpo (na ordem de id_corpo),
-     * os quatro valores que a tela precisa para desenhar: posição X, posição Y, velocidade X e velocidade Y. */
+     * o que a tela precisa para desenhar: id, posição X, posição Y, velocidade X, velocidade Y, massa, densidade e nome. */
     public class QuadroReplay
     {
         public int Passo { get; set; }
         public double Tempo { get; set; }
-        public List<double[]> Corpos { get; set; } = new List<double[]>();
+        public List<object[]> Corpos { get; set; } = new List<object[]>();
     }
 
     /* Carrega do banco, em uma única consulta, um bloco de passos consecutivos de uma simulação
@@ -429,7 +461,8 @@ private const int LinhasPorBloco = 500;
         string sql = @"
 SELECT ec.num_passo, ec.tempo_decorrido,
        c.id_corpo,
-       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
+       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
+       ec.massa, ec.densidade, ec.nome
         FROM EstadoCorpo ec
         INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
         WHERE c.id_simulacao = @idSimulacao
@@ -461,13 +494,16 @@ SELECT ec.num_passo, ec.tempo_decorrido,
                     }
 
                     /* Adiciona os dados do corpo ao quadro atual. */
-                    quadros[quadros.Count - 1].Corpos.Add(new double[]
+                    quadros[quadros.Count - 1].Corpos.Add(new object[]
                     {
-    reader.GetInt32("id_corpo"),
-    reader.GetDouble("pos_x"),
-    reader.GetDouble("pos_y"),
-    reader.GetDouble("vel_x"),
-    reader.GetDouble("vel_y")
+                        reader.GetInt32("id_corpo"),
+                        reader.GetDouble("pos_x"),
+                        reader.GetDouble("pos_y"),
+                        reader.GetDouble("vel_x"),
+                        reader.GetDouble("vel_y"),
+                        reader.GetDouble("massa"),
+                        reader.GetDouble("densidade"),
+                        reader.GetString("nome")
                     });
                 }
             }
@@ -547,6 +583,9 @@ SELECT ec.num_passo, ec.tempo_decorrido,
                 "Inicie uma simulação antes de gravar os passos.");
         }
 
+        /* Se a gravação já deu erro, não adianta continuar juntando linhas. */
+        if (erroNaGravacao) return;
+
         /* Para cada corpo na lista de corpos fornecida, verifica se o corpo pertence à simulação atual 
          * (usando o mapa de IDs de corpos). Se o corpo não pertencer à simulação, lança uma exceção. 
          * Caso contrário, cria uma nova linha de estado (LinhaEstado) com as informações do corpo e adiciona 
@@ -574,8 +613,8 @@ SELECT ec.num_passo, ec.tempo_decorrido,
         }
     }
 
-    /* Grava no banco todas as linhas acumuladas, com UM INSERT de várias linhas
-     * dentro de uma transação (ou grava o bloco inteiro, ou nada dele). */
+    /* Tira as linhas do buffer e as coloca na fila de blocos (no máximo LinhasPorBloco linhas
+     * por bloco). Não espera o banco: quem grava é a thread de gravação. */
     public void DescarregarBuffer()
     {
         if (bufferLinhas.Count == 0)
@@ -583,6 +622,48 @@ SELECT ec.num_passo, ec.tempo_decorrido,
             return;
         }
 
+        for (int inicio = 0; inicio < bufferLinhas.Count; inicio += LinhasPorBloco)
+        {
+            int quantidade = Math.Min(LinhasPorBloco, bufferLinhas.Count - inicio);
+            blocosEsperando.Add(bufferLinhas.GetRange(inicio, quantidade));
+        }
+        bufferLinhas.Clear();
+
+        /* Cria a thread de gravação na primeira vez. */
+        threadGravacao ??= Task.Factory.StartNew(GravarBlocosEsperando, TaskCreationOptions.LongRunning);
+    }
+
+    /* Executado pela thread de gravação: grava os blocos, um por vez, até a fila ser fechada
+     * no FinalizarSimulacao. Depois de um erro, os blocos restantes são descartados. */
+    private void GravarBlocosEsperando()
+    {
+        try
+        {
+            foreach (List<LinhaEstado> bloco in blocosEsperando.GetConsumingEnumerable())
+            {
+                if (erroNaGravacao) continue;
+
+                try
+                {
+                    GravarBloco(bloco);
+                }
+                catch (Exception ex)
+                {
+                    excecaoGravacao = ex;
+                    erroNaGravacao = true;
+                }
+            }
+        }
+        finally
+        {
+            FecharConexao();
+        }
+    }
+
+    /* Grava no banco um bloco de linhas, com UM INSERT de várias linhas
+     * dentro de uma transação (ou grava o bloco inteiro, ou nada dele). */
+    private void GravarBloco(List<LinhaEstado> linhas)
+    {
         /* Inicia o cronômetro para medir o tempo gasto na gravação do bloco de linhas. */
         cronometroGravacao.Start();
         try
@@ -590,39 +671,36 @@ SELECT ec.num_passo, ec.tempo_decorrido,
             /* Abre a conexão só na primeira vez; depois ela é reaproveitada. */
             conexaoGravacao ??= ConexaoBD.ObterConexao();
 
-            /* Inicia uma transação para garantir que todas as operações de inserção sejam atômicas. 
+            /* Inicia uma transação para garantir que todas as operações de inserção sejam atômicas.
              * Se ocorrer algum erro durante a inserção, a transação será revertida. */
             using (MySqlTransaction transacao = conexaoGravacao.BeginTransaction())
             {
                 try
                 {
                     StringBuilder sql = new StringBuilder(
-                        "INSERT INTO EstadoCorpo (corpo_id, num_passo, tempo_decorrido, " +
+                        "INSERT INTO EstadoCorpo (corpo_id, num_passo, tempo_decorrido, nome, massa, densidade, " +
                         "pos_x, pos_y, vel_x, vel_y, forca_x, forca_y, aceleracao_x, aceleracao_y) VALUES ");
 
-                    /* Cria um comando MySQL para executar a inserção em lote. Cada linha do 
-                     * buffer é adicionada como um conjunto de parâmetros com sufixos únicos 
-                     * para evitar conflitos. */
                     using (MySqlCommand cmd = new MySqlCommand())
                     {
                         cmd.Connection = conexaoGravacao;
                         cmd.Transaction = transacao;
 
                         /* Cada linha ganha parâmetros com sufixo próprio (@c0, @n0, @c1, ...) */
-                        for (int i = 0; i < bufferLinhas.Count; i++)
+                        for (int i = 0; i < linhas.Count; i++)
                         {
-                            /* Obtém a linha de estado correspondente ao índice atual do buffer. */
-                            LinhaEstado l = bufferLinhas[i];
+                            LinhaEstado l = linhas[i];
 
                             /* Adiciona uma vírgula entre os conjuntos de valores, exceto antes do primeiro conjunto. */
                             if (i > 0) sql.Append(',');
-                            sql.Append($"(@c{i},@n{i},@t{i},@px{i},@py{i},@vx{i},@vy{i},@fx{i},@fy{i},@ax{i},@ay{i})");
+                            sql.Append($"(@c{i},@n{i},@t{i},@nm{i},@m{i},@d{i},@px{i},@py{i},@vx{i},@vy{i},@fx{i},@fy{i},@ax{i},@ay{i})");
 
-                            /* Adiciona os parâmetros correspondentes para cada linha do buffer, 
-                             * usando sufixos únicos para evitar conflitos. */
                             cmd.Parameters.AddWithValue($"@c{i}", l.CorpoId);
                             cmd.Parameters.AddWithValue($"@n{i}", l.NumPasso);
                             cmd.Parameters.AddWithValue($"@t{i}", l.TempoDecorrido);
+                            cmd.Parameters.AddWithValue($"@nm{i}", l.Nome);
+                            cmd.Parameters.AddWithValue($"@m{i}", l.Massa);
+                            cmd.Parameters.AddWithValue($"@d{i}", l.Densidade);
                             cmd.Parameters.AddWithValue($"@px{i}", l.PosX);
                             cmd.Parameters.AddWithValue($"@py{i}", l.PosY);
                             cmd.Parameters.AddWithValue($"@vx{i}", l.VelX);
@@ -633,19 +711,12 @@ SELECT ec.num_passo, ec.tempo_decorrido,
                             cmd.Parameters.AddWithValue($"@ay{i}", l.AceleracaoY);
                         }
 
-                        /* Define o texto do comando SQL com os valores acumulados no StringBuilder e executa a inserção em lote. */
                         cmd.CommandText = sql.ToString();
                         cmd.ExecuteNonQuery();
                     }
 
-                    /* Se todas as operações de inserção foram bem-sucedidas, a transação é confirmada, 
-                     * o buffer de linhas é limpo e o cronômetro de gravação é parado. */
                     transacao.Commit();
-                    bufferLinhas.Clear();
                 }
-                /* Catch para capturar qualquer exceção que ocorra durante a inserção em lote. 
-                 * Em caso de erro, a transação é revertida, uma mensagem de erro é exibida no console 
-                 * e a exceção é relançada para tratamento posterior. */
                 catch (Exception ex)
                 {
                     transacao.Rollback();
@@ -654,29 +725,19 @@ SELECT ec.num_passo, ec.tempo_decorrido,
                 }
             }
         }
-        catch (Exception)
-        {
-            /* Em caso de erro na gravação, define a flag erroNaGravacao como true para indicar que ocorreu um problema. 
-             * Isso impede que o FinalizarSimulacao tente gravar o que sobrou no buffer, 
-             * pois provavelmente falharia novamente. */
-            erroNaGravacao = true;
-            throw;
-        }
         finally
         {
-            /* Para garantir que o cronômetro de gravação seja parado, mesmo em caso de erro, 
-             * o cronômetro é parado no bloco finally. */
+            /* Para garantir que o cronômetro de gravação seja parado, mesmo em caso de erro. */
             cronometroGravacao.Stop();
         }
     }
 
-    /* Deve ser chamado ao fim da simulação: grava o último bloco (quase sempre menor
-     * que LinhasPorBloco) e fecha a conexão. Sem isso, as últimas linhas ficariam só
-     * na memória e o replay as perderia. */
+    /* Deve ser chamado ao fim da simulação: manda o último bloco (quase sempre menor que
+     * LinhasPorBloco), espera a thread de gravação terminar tudo e fecha a conexão. Sem isso,
+     * as últimas linhas ficariam só na memória e o replay as perderia.
+     * Se a gravação deu erro, a exceção é lançada aqui. */
     public void FinalizarSimulacao()
     {
-        /* Bloque try-finally para garantir que a conexão seja fechada e o buffer seja limpo, 
-         * mesmo em caso de erro na gravação. */
         try
         {
             if (!erroNaGravacao)
@@ -686,8 +747,17 @@ SELECT ec.num_passo, ec.tempo_decorrido,
         }
         finally
         {
-            FecharConexao();
             bufferLinhas.Clear();
+            if (!blocosEsperando.IsAddingCompleted) blocosEsperando.CompleteAdding();
+
+            /* Espera a thread de gravação terminar (ela fecha a própria conexão). */
+            if (threadGravacao is not null) threadGravacao.GetAwaiter().GetResult();
+            else FecharConexao();
+        }
+
+        if (excecaoGravacao is not null)
+        {
+            ExceptionDispatchInfo.Capture(excecaoGravacao).Throw();
         }
     }
 
@@ -702,7 +772,9 @@ SELECT ec.num_passo, ec.tempo_decorrido,
     /* Rede de segurança caso o FinalizarSimulacao não seja chamado. */
     public void Dispose()
     {
-        FecharConexao();
+        /* Fecha a fila: a thread de gravação termina o que já recebeu e fecha a própria conexão. */
+        if (!blocosEsperando.IsAddingCompleted) blocosEsperando.CompleteAdding();
+        if (threadGravacao is null) FecharConexao();
         bufferLinhas.Clear();
     }
 }

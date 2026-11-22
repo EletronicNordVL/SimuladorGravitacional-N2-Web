@@ -35,7 +35,7 @@
                 <div class="section-heading"><h2>Seu universo</h2><span class="small-tag">01</span></div>
                 <label class="field-label" for="body-count">Quantidade de corpos</label><input id="body-count" type="number" min="1" value="12">
                 <p class="field-note">Corpos com massas, densidades, posições e velocidades aleatórias, gerados pelo código original.</p>
-                <div class="generation-ranges"><div><span>Massa</span><strong>10²² – 10²⁵ kg</strong></div><div><span>Densidade</span><strong>3.000 – 6.000 kg/m³</strong></div><div><span>Posição X / Y</span><strong>±5 × 10⁹ m</strong></div><div><span>Velocidade X / Y</span><strong>±200 m/s</strong></div></div>
+                <div class="generation-ranges"><div><span>Massa</span><strong>10²³ – 10²⁶ kg</strong></div><div><span>Densidade</span><strong>500 – 15.000 kg/m³</strong></div><div><span>Posição X / Y</span><strong>±5 × 10⁹ m</strong></div><div><span>Velocidade</span><strong>até 3.600 m/s</strong></div></div>
                 <button class="button button-outline full-width" id="generate-button"><span aria-hidden="true">↻</span> Gerar corpos aleatórios</button>
                 <div class="section-rule"></div>
                 <div class="section-heading"><h2>Simulação</h2><span class="subtle-icon">⌁</span></div>
@@ -45,6 +45,8 @@
                 <input id="speed" type="range" min="1" max="10" value="1"><div class="range-labels"><span>1×</span><span>10×</span></div>
                 <label class="toggle-row" for="record">Gravar iterações no banco <input type="checkbox" class="switch" id="record" checked></label>
                 <p class="field-note">Grava todos os corpos em cada iteração no MySQL, para rever a simulação depois com ▶ Replay.</p>
+                <label class="toggle-row" for="parallel">Processamento paralelo (N2) <input type="checkbox" class="switch" id="parallel" checked></label>
+                <p class="field-note" id="mode-note">Desligue para usar a versão sequencial N1 e comparar o desempenho.</p>
                 <div class="section-rule"></div>
                 <div class="section-heading"><h2>Visualização</h2><span class="subtle-icon">◉</span></div>
                 <label class="toggle-row" for="trails">Trajetórias <input type="checkbox" class="switch" id="trails" checked></label>
@@ -110,7 +112,7 @@
     <p><b>4. Guarde sua descoberta.</b> Salve suas simulações no banco de dados MySQL. Você pode abrir universos salvos, reproduzir suas iterações com o Replay ou deletar simulações que não deseja mais manter.</p>
         <div class="help-physics">
         <b>A física por trás da tela</b>
-        <p>A simulação usa diretamente as classes C# do projeto: força gravitacional de Newton, atualização de posição e velocidade pelo método Velocity Verlet e colisões elásticas. É uma aproximação numérica: passos grandes, especialmente em encontros próximos, reduzem a precisão. Reduza o passo de tempo nesses casos.</p>
+        <p>A simulação usa diretamente as classes C# do projeto: força gravitacional de Newton, atualização da velocidade e depois da posição a cada iteração (Euler semi-implícito) e fusão dos corpos que se tocam, conservando massa e quantidade de movimento. Os cálculos de força e a busca de colisões são divididos entre os núcleos do processador (computação paralela). É uma aproximação numérica: passos grandes, especialmente em encontros próximos, reduzem a precisão. Reduza o passo de tempo nesses casos.</p>
         <p>Os rastros mostram o histórico real de posições. O zoom altera apenas a visualização. ↺ restaura o estado inicial mais recente, incluindo suas edições.</p></div><p class="field-note">Atalhos: espaço para iniciar ou pausar; + e − para zoom; F para enquadrar.</p>
         </div>
     </dialog>

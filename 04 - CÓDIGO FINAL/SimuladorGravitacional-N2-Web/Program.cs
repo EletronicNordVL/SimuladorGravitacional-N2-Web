@@ -4,9 +4,11 @@ using MySql.Data.MySqlClient;
 using System.Collections.Concurrent;
 using TrabalhoN2;
 
-/* O namespace SimuladorGravitacional_N2 contém classes relacionadas à simulação gravitacional, 
- * incluindo a classe ConexaoBD para gerenciar a conexão com o banco de dados MySQL. */
-var gravadoresAtivos = new ConcurrentDictionary<int, GravadorUniversoBD>();
+/* Simulações que estão rodando agora, cada uma ligada a uma aba do navegador. */
+var sessoes = new ConcurrentDictionary<Guid, SessaoSimulacao>();
+
+/* Depois de quanto tempo sem uso uma simulação é encerrada. */
+var tempoMaximoOcioso = TimeSpan.FromMinutes(15);
 
 /* Este projeto implementa uma simulação de um universo com corpos celestes, permitindo a criação, manipulação e exportação de estados do universo. 
  * A aplicação é construída utilizando ASP.NET Core e fornece uma API RESTful para interação com o universo simulado. */
@@ -61,7 +63,7 @@ app.MapGet("/api/health", (HttpResponse response) =>
     /* Retorna informações de saúde da aplicação que incluem status, 
      * nome da aplicação, caminho de armazenamento e ID do processo. */
     response.Headers.CacheControl = "no-store";
-    return new { status = "ok", application = "TrabalhoN1", storagePath = storage, processId = Environment.ProcessId };
+    return new { status = "ok", application = "SimuladorGravitacionalN2", storagePath = storage, processId = Environment.ProcessId };
 });
 
 /*  * Rota para criar um novo universo com corpos aleatórios. */
@@ -97,47 +99,115 @@ app.MapPost("/api/universes/create", (CreateRequest request) =>
     return Snapshot.From(universe, 0, 0);
 });
 
-/* Rota para avançar a simulação em um número de passos. */
-app.MapPost("/api/simulation/step", (StepRequest request) =>
+/* Rota que começa uma simulação no servidor, a partir do universo que está na tela.
+ * Se a página pedir gravação (e for a iteração 0), a simulação também é criada no MySQL. */
+app.MapPost("/api/simulation/start", (StartRequest request) =>
 {
-    /* Valida se o estado do universo na requisição não é nulo. */
     ArgumentNullException.ThrowIfNull(request.State);
 
-    /* Converte o estado do universo recebido na requisição para um objeto Universo. */
     var universe = request.State.ToUniverse();
-    if (request.Steps < 1 || request.Steps > 100) throw new ArgumentException("Quantidade de passos inválida.");
-
-    var steps = Math.Min(request.Steps, universe.QuantidadeIteracoes - request.State.Iteration);
-    var passosExecutados = 0;
-
-    using var gravador = request.State.IdSimulacao > 0 ? new GravadorUniversoBD() : null;
-    gravador?.RetomarSimulacao(request.State.IdSimulacao, universe.Corpos, request.State.Iteration);
-
+    universe.UsarParalelismo = request.Paralelo;
     universe.CalcularForcas();
 
-    for (var i = 0; i < steps; i++)
+    var sessao = new SessaoSimulacao(universe, request.State.Iteration, request.State.Elapsed);
+    string? aviso = null;
+    if (request.Gravar && request.State.Iteration == 0)
+        aviso = sessao.ComecarGravacao($"Simulação {DateTime.Now:dd/MM/yyyy HH:mm:ss}");
+
+    sessoes[sessao.Id] = sessao;
+
+    return Results.Ok(new
     {
-        /* Encerra o avanço quando todos os corpos se tornarem um só. */
-        if (universe.Corpos.Count <= 1)
-            break;
+        sessao = sessao.Id,
+        aviso,
+        threads = Environment.ProcessorCount,
+        state = Snapshot.From(universe, sessao.Iteracao, sessao.TempoDecorrido, sessao.IdSimulacao)
+    });
+});
 
-        universe.AvancarIteracao(universe.TempoEntreIteracoes);
-        ValidateBodies(universe.Corpos);
+/* Rota que avança a simulação guardada no servidor. A página manda só a quantidade de
+ * passos e as configurações (que podem ter mudado enquanto estava pausada). */
+app.MapPost("/api/simulation/{id:guid}/step", async (Guid id, StepRequest request) =>
+{
+    if (!sessoes.TryGetValue(id, out var sessao))
+        return Results.NotFound(new { error = "A simulação não está mais ativa no servidor." });
+    if (request.Steps < 1 || request.Steps > 100) throw new ArgumentException("Quantidade de passos inválida.");
 
-        passosExecutados++;
+    await sessao.Trava.WaitAsync();
+    try
+    {
+        var universe = sessao.Universo;
 
-        gravador?.GravarPasso(
-            request.State.Iteration + passosExecutados,
-            request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,
-            universe.Corpos);
+        if (request.QuantidadeIteracoes < sessao.Iteracao)
+            throw new ArgumentException("O limite de iterações é inválido.");
+        if (!double.IsFinite(request.TempoEntreIteracoes) || request.TempoEntreIteracoes < .001 || request.TempoEntreIteracoes > 86400)
+            throw new ArgumentException("O passo de tempo deve estar entre 0,001 e 86.400 segundos.");
+        universe.QuantidadeIteracoes = request.QuantidadeIteracoes;
+        universe.TempoEntreIteracoes = request.TempoEntreIteracoes;
+        universe.UsarParalelismo = request.Paralelo;
+
+        var (fusoes, esperandoBanco, aviso) = sessao.Avancar(request.Steps);
+
+        /* Na última iteração, espera tudo ser gravado e fecha a gravação. */
+        if (sessao.Terminou)
+            aviso = await sessao.TerminarGravacaoAsync() ?? aviso;
+
+        return Results.Ok(new
+        {
+            state = Snapshot.From(universe, sessao.Iteracao, sessao.TempoDecorrido, sessao.IdSimulacao),
+            fusoes,
+            esperandoBanco,
+            gravando = sessao.Gravador is not null,
+            threads = Environment.ProcessorCount,
+            aviso
+        });
     }
+    finally
+    {
+        sessao.Trava.Release();
+    }
+});
 
-    gravador?.FinalizarSimulacao();
+/* Rota que encerra a simulação do servidor (novo universo, reinício, edição ou aba fechada).
+ * Só responde depois que todos os passos foram gravados. */
+app.MapPost("/api/simulation/{id:guid}/stop", async (Guid id) =>
+{
+    if (!sessoes.TryRemove(id, out var sessao)) return Results.NoContent();
 
-    return Snapshot.From(universe,
-        request.State.Iteration + passosExecutados,
-        request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,
-        request.State.IdSimulacao);
+    await sessao.Trava.WaitAsync();
+    try
+    {
+        var aviso = await sessao.TerminarGravacaoAsync();
+        return aviso is null ? Results.NoContent() : Results.Ok(new { aviso });
+    }
+    finally
+    {
+        sessao.Trava.Release();
+    }
+});
+
+/* A cada minuto, encerra as simulações que ninguém usa há muito tempo
+ * (por exemplo, quando a aba foi fechada e o aviso de encerramento não chegou). */
+_ = Task.Run(async () =>
+{
+    using var relogio = new PeriodicTimer(TimeSpan.FromMinutes(1));
+    while (await relogio.WaitForNextTickAsync())
+    {
+        foreach (var (id, sessao) in sessoes)
+        {
+            if (DateTime.UtcNow - sessao.UltimoUso < tempoMaximoOcioso || !sessoes.TryRemove(id, out _)) continue;
+            await sessao.Trava.WaitAsync();
+            try { await sessao.TerminarGravacaoAsync(); }
+            finally { sessao.Trava.Release(); }
+        }
+    }
+});
+
+/* Quando o servidor for desligado, termina as gravações abertas para não perder passos. */
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    var gravacoes = sessoes.Values.Select(sessao => sessao.TerminarGravacaoAsync()).ToArray();
+    try { Task.WaitAll(gravacoes, TimeSpan.FromSeconds(30)); } catch { /* o servidor já está fechando */ }
 });
 
 /* Rota para listar todas as simulações salvas no banco de dados. */
@@ -278,8 +348,11 @@ static void ValidateBodies(List<Corpo> bodies) => Snapshot.ValidateBodies(bodies
 /* Classes de requisição para a API. */
 record CreateRequest(int Count, int Iterations, double Timestep);
 
+/* Classe de requisição para iniciar uma simulação no servidor. */
+record StartRequest(Snapshot State, bool Gravar, bool Paralelo = true);
+
 /* Classe de requisição para avançar a simulação em um número de passos. */
-record StepRequest(Snapshot State, int Steps);
+record StepRequest(int Steps, int QuantidadeIteracoes, double TempoEntreIteracoes, bool Paralelo = true);
 
 /* Classe Snapshot representa o estado de um universo em um determinado ponto no tempo, incluindo os corpos presentes, 
  * a quantidade de iterações, o tempo entre iterações, a iteração atual e o tempo decorrido. */

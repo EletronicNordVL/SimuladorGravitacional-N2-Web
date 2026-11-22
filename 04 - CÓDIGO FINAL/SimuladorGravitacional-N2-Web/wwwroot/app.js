@@ -18,6 +18,10 @@ let moved = false, lastListUpdate = 0;
  * último passo gravado, passo atual e os quadros já baixados do banco que ainda não foram exibidos. */
 let replay = null;
 
+/* Id da simulação em andamento no servidor (null quando não há). O servidor mantém o universo e a gravação
+ * vivos entre as requisições; a tela só pede "avance N passos". */
+let session = null, threads = null;
+
 /* Função auxiliar para clonar objetos de forma profunda, garantindo que alterações no estado atual não afetem o estado inicial. */
 const clone = value => structuredClone(value);
 const color = index => colors[index % colors.length];
@@ -37,7 +41,9 @@ async function api(path, data, method = 'POST') {
     if (!response.ok) {
         let message = 'Não foi possível concluir a operação.';
         try { const error = await response.json(); message = error.error || error.detail || message; } catch { /* Resposta sem JSON. */ }
-        throw new Error(message);
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
     }
     /* Retorna null para respostas 204 (No Content) e o JSON para outras respostas bem-sucedidas. */
     return response.status === 204 ? null : response.json();
@@ -91,23 +97,65 @@ function setControls() {
     $('play-button').disabled = !state || transition;
     $('step-button').disabled =
         blocked || running ||
-        state?.corpos.length <= 1 ||
         state?.iteration >= state?.quantidadeIteracoes;
     $('iterations').disabled = running || busy || transition;
     $('timestep').disabled = running || busy || transition;
 
     /* No replay só é possível reproduzir o que foi gravado: não há edição, salvamento nem mudança de parâmetros. */
     if (replay) {
-        for (const id of ['save-button', 'add-body', 'edit-body', 'iterations', 'timestep', 'record'])
+        for (const id of ['save-button', 'add-body', 'edit-body', 'iterations', 'timestep', 'record', 'parallel'])
             $(id).disabled = true;
-    } else $('record').disabled = running || busy || transition;
+    } else {
+        $('record').disabled = running || busy || transition;
+        $('parallel').disabled = transition;
+    }
+}
+
+/* Atualiza o texto embaixo do interruptor, dizendo como os cálculos estão sendo feitos. */
+function updateMode() {
+    $('mode-note').textContent = $('parallel').checked
+        ? `Cálculos divididos entre ${threads ? `${threads} núcleos` : 'os núcleos'} do processador. Desligue para comparar com a versão de uma thread (N1).`
+        : 'Cálculos em uma única thread, como no N1. Ligue para dividir entre os núcleos do processador (N2).';
+}
+
+/* Encerra a simulação do servidor (ele só responde depois de gravar todos os passos). */
+function stopSession() {
+    const id = session;
+    session = null;
+    if (!id) return;
+    api(`/api/simulation/${id}/stop`).then(result => { if (result?.aviso) toast(result.aviso, true); }).catch(() => { /* a sessão expira sozinha */ });
+}
+
+/* Cria a simulação no servidor a partir do estado atual. Se "Gravar iterações no banco" estiver ligado (e for a
+ * iteração 0), o servidor cria a simulação no MySQL. Se o banco estiver indisponível, a simulação segue sem gravar. */
+async function ensureSession() {
+    if (session || replay) return;
+    const gravar = $('record').checked && state.iteration === 0;
+    const result = await api('/api/simulation/start', { state, gravar, paralelo: $('parallel').checked });
+    session = result.sessao;
+    threads = result.threads;
+    state = result.state; /* Mesmos corpos, na mesma ordem, com nomes únicos e os IDs do banco. */
+    updateMode();
+    if (result.aviso) { $('record').checked = false; toast(result.aviso, true); }
+    else if (state.idSimulacao > 0) toast('Gravando cada iteração no banco de dados.');
+}
+
+/* Pede ao servidor que avance a simulação. Se a sessão expirou (ou o servidor reiniciou), cria outra a partir do
+ * estado atual e tenta de novo uma vez. */
+async function stepSession(steps) {
+    const body = { steps, quantidadeIteracoes: state.quantidadeIteracoes, tempoEntreIteracoes: state.tempoEntreIteracoes, paralelo: $('parallel').checked };
+    try { return await api(`/api/simulation/${session}/step`, body); }
+    catch (error) {
+        if (error.status !== 404) throw error;
+        session = null;
+        await ensureSession();
+        return api(`/api/simulation/${session}/step`, body);
+    }
 }
 
 /* Função para atualizar o status da simulação e os controles da interface. */
 function updateStatus() {
-    const completed = state &&
-        (state.corpos.length <= 1 ||
-            state.iteration >= state.quantidadeIteracoes);
+    const completed = state && state.iteration >= state.quantidadeIteracoes;
     $('status').textContent = (replay ? 'REPLAY · ' : '') + (running ? 'EM MOVIMENTO' : completed ? 'CONCLUÍDO' : 'PAUSADO');
     $('status').classList.toggle('running', running);
     $('play-button').replaceChildren();
@@ -128,6 +176,7 @@ function pause() {
 /* Função para aplicar um novo estado à simulação, redefinir as condições iniciais e atualizar a interface. */
 function applyState(next, title = 'Universo personalizado') {
     pause();
+    stopSession(); /* O universo anterior deixa de existir: fecha a simulação (e a gravação) no servidor. */
     replay = null; /* Qualquer novo estado (gerar, abrir, importar) encerra o modo replay. */
     state = next; /* O estado atual é substituído pelo novo estado fornecido. */
     initialState = clone(next); /* O estado inicial é atualizado para o novo estado, permitindo reinicializações. */
@@ -203,22 +252,23 @@ async function advance(steps = 1) {
         /* No replay, os passos vêm do banco de dados em vez de serem calculados. */
         if (replay) { await replayAdvance(steps); return; }
         readSettings();
-        const next = await api('/api/simulation/step', { state, steps });
-        state = next;
+        await ensureSession();
+        const result = await stepSession(steps);
+        threads = result.threads;
+        if (result.aviso) { $('record').checked = false; toast(result.aviso, true); }
+        const next = result.state;
+        const houveFusao = next.corpos.length < state.corpos.length;
+        if (houveFusao) {
+            const nomes = state.corpos.map(body => body.nome);
+            const novoIndice = next.corpos.findIndex(body => body.nome === nomes[selected]);
+            if (novoIndice >= 0) selected = novoIndice;
+            else selected = Math.min(selected, next.corpos.length - 1);
 
-        /* Se ainda existem vários corpos e o limite foi atingido,
-         * acrescenta mais 300 iterações automaticamente. */
-        if (state.corpos.length > 1 &&
-            state.iteration >= state.quantidadeIteracoes &&
-            state.quantidadeIteracoes < 2147483647) {
-
-            state.quantidadeIteracoes = Math.min(
-                2147483647,
-                state.quantidadeIteracoes + 300
-            );
-
-            $('iterations').value = state.quantidadeIteracoes;
+            const indices = new Map();
+            nomes.forEach((nome, index) => indices.set(nome, indices.has(nome) ? -1 : index));
+            trails = next.corpos.map(body => trails[indices.get(body.nome)] || []);
         }
+        state = next;
 
         state.corpos.forEach((body, index) => {
             if (!trails[index]) trails[index] = [];
@@ -227,32 +277,10 @@ async function advance(steps = 1) {
         });
 
 /* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
-        updateUI(performance.now() - lastListUpdate > 400);
-        if (state.corpos.length <= 1) {
-            pause();
-            toast('Todos os corpos se fundiram! Simulação concluída.');
-        }
+        updateUI(houveFusao || performance.now() - lastListUpdate > 400);
+        if (state.iteration >= state.quantidadeIteracoes) pause();
     } catch (error) { pause(); toast(error.message, true); }
     finally { busy = false; setControls(); }
-}
-
-/* Se a opção "Gravar iterações no banco" estiver ligada, cria a simulação no MySQL (estado inicial = passo 0) antes da
- * primeira iteração. A partir daí, cada chamada de /api/simulation/step grava os passos no banco.
- * Se o banco estiver indisponível, a simulação segue normalmente, só que sem gravar. */
-async function ensureRecording() {
-    if (!$('record').checked || replay || state.idSimulacao > 0 || state.iteration !== 0) return;
-    try {
-        const saved = await api('/api/universes/save', state);
-        state.idSimulacao = saved.id;
-        /* Atualiza os IDs dos corpos com os registros criados no banco. */
-        state.corpos.forEach((corpo, index) => {
-            corpo.idCorpoBanco = saved.corpoIds[index];
-        });
-        toast('Gravando cada iteração no banco de dados.');
-    } catch (error) {
-        $('record').checked = false;
-        toast(`${error.message} A simulação seguirá sem gravar no banco.`, true);
-    }
 }
 
 /* Abre o replay de uma simulação gravada: carrega o estado inicial (passo 0) e deixa os passos seguintes para serem
@@ -305,13 +333,15 @@ corretamente mesmo que a ordem dos corpos mude. */
         const novosCorpos = [];
 
 /* Itera sobre cada corpo no quadro atual, atualizando suas posições e velocidades com base nos dados do replay, e mantendo os rastros de cada corpo. */
-        quadro.corpos.forEach(([idCorpo, posX, posY, velX, velY]) => {
+        quadro.corpos.forEach(([idCorpo, posX, posY, velX, velY, massa, densidade, nome]) => {
             const corpo = corposPorId.get(idCorpo);
 
             if (!corpo)
                 throw new Error('Corpo não encontrado no histórico do Replay.');
 
-            Object.assign(corpo, { posX, posY, velX, velY });
+            /* Massa, densidade e nome vêm de cada passo gravado, porque mudam quando há fusão. */
+            const raio = Math.cbrt(3 * massa / densidade / (4 * Math.PI));
+            Object.assign(corpo, { posX, posY, velX, velY, massa, densidade, nome, raio });
 
             const rastro = rastrosPorId.get(idCorpo) || [];
 
@@ -354,9 +384,11 @@ async function play() {
     try { if (!replay) readSettings(); } catch (error) { toast(error.message, true); return; }
     if (state.iteration >= state.quantidadeIteracoes) reset();
 
-    /* Cria a simulação no banco (se a gravação estiver ligada). O busy evita cliques duplicados enquanto isso acontece. */
+    /* Cria a simulação no servidor (e no banco, se a gravação estiver ligada). O busy evita cliques duplicados. */
     busy = true; setControls();
-    try { await ensureRecording(); } finally { busy = false; }
+    try { await ensureSession(); }
+    catch (error) { toast(error.message, true); return; }
+    finally { busy = false; setControls(); }
     running = true;
     updateStatus();
     loop();
@@ -366,6 +398,7 @@ async function play() {
 function reset() {
     if (busy || transition || !initialState) return; /* Se não houver estado inicial, não há como reiniciar. */
     pause();
+    stopSession(); /* Recomeçar cria outra simulação no servidor (e outra gravação no banco). */
     if (replay) { replay.pos = 0; replay.buffer.clear(); } /* O replay volta ao passo 0 imediatamente. */
     state = clone(initialState);
     trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]);
@@ -576,6 +609,7 @@ com base na quantidade de corpos e exibe o diálogo para edição ou adição do
 function commitEdit() {
     state.iteration = 0; state.elapsed = 0; /* Reinicia a simulação, pois as condições iniciais mudaram. */
     state.idSimulacao = 0; /* Corpos editados: a gravação em andamento não vale mais; a próxima simulação cria outra. */
+    stopSession();
     initialState = clone(state); /* Atualiza o estado inicial para refletir as alterações feitas nos corpos. */
     trails = state.corpos.map(c => [{ x: c.posX, y: c.posY }]); /* Reinicia os rastros dos corpos com base nas novas posições iniciais. */
     $('universe-title').textContent = 'Universo personalizado'; 
@@ -733,6 +767,11 @@ simulação com atalhos de teclado, como pausar, avançar, ajustar o zoom e ajus
 
 /*  Função para pausar a simulação automaticamente quando a aba do navegador não estiver visível, evitando que a simulação continue em segundo plano e consuma recursos desnecessários. */
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+
+/* Ao fechar a aba, avisa o servidor para fechar a gravação (sem esperar resposta). */
+window.addEventListener('pagehide', () => { if (session) navigator.sendBeacon(`/api/simulation/${session}/stop`); });
+$('parallel').addEventListener('change', updateMode);
+updateMode();
 setControls();
 draw();
 generate(false);

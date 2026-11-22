@@ -1,4 +1,4 @@
-﻿using SimuladorGravitacional_N2;
+using SimuladorGravitacional_N2;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,7 +9,15 @@ namespace TrabalhoN2;
 public class Universo
 {
     /* Constante gravitacional utilizada no cálculo da força entre os corpos. */
-    private const double G = 6.674184e-11;
+    private const double G = 6.67430e-11;
+
+    // A escala converte o passo de 0,016 s da referencia para 3.600 s na Web.
+    private const double MetrosPorUnidade = 1e7;
+    private const double SegundosPorUnidade = 3600 / 0.016;
+    private const double Suavizacao = 15 * MetrosPorUnidade;
+    private const double MassaPorUnidade = (800 / G) *
+        (MetrosPorUnidade * MetrosPorUnidade * MetrosPorUnidade) /
+        (SegundosPorUnidade * SegundosPorUnidade);
 
     /* Lista de corpos presentes no universo. */
     public List<Corpo> Corpos { get; private set; }
@@ -19,6 +27,13 @@ public class Universo
 
     /* Tempo entre cada iteração da simulação, em segundos. */
     public double TempoEntreIteracoes { get; set; }
+
+    /* Define como os cálculos são feitos: true usa várias threads (N2) e false usa
+     * uma única thread, como no trabalho N1. Serve para comparar o desempenho das duas. */
+    public bool UsarParalelismo { get; set; } = true;
+
+    /* Quantas fusões aconteceram na última chamada de TratarColisoes. */
+    public int FusoesUltimaIteracao { get; private set; }
 
     /* Instância do gravador do MySQL */
     private GravadorUniversoBD gravador;
@@ -37,309 +52,210 @@ public class Universo
         Corpos.Add(corpo);
     }
 
-    /* Calcula a distância entre dois corpos. */
-    private double CalcularDistancia(Corpo corpo1, Corpo corpo2)
-    {
-        double deltaX = corpo2.PosX - corpo1.PosX;
-        double deltaY = corpo2.PosY - corpo1.PosY;
-
-        /* Utiliza o Teorema de Pitágoras para calcular a distância entre os corpos. */
-        return Math.Sqrt(
-            deltaX * deltaX +
-            deltaY * deltaY
-        );
-    }
-
-    /* Calcula a força gravitacional entre dois corpos. */
-    private double CalcularForcaGravitacional(
-        Corpo corpo1,
-        Corpo corpo2)
-    {
-        /* Calcula a distância entre os corpos usando o método CalcularDistancia. */
-        double distancia = CalcularDistancia(corpo1, corpo2);
-
-        /* Evita divisão por zero caso os corpos estejam na mesma posição. */
-        if (distancia == 0)
-        {
-            return 0;
-        }
-
-        /* Aplica a fórmula da força gravitacional: F = G * (m1 * m2) / r² */
-        return G * corpo1.Massa * corpo2.Massa
-               / (distancia * distancia);
-    }
-
-    /* Calcula a força gravitacional resultante sobre os corpos usando Parallel.For. */
     public void CalcularForcas()
     {
-        /* Zera as forças resultantes antes de calcular as novas forças. */
-        Parallel.For(0, Corpos.Count, i =>
+        /* Sem paralelismo, usa a versão de uma thread só (N1). */
+        if (!UsarParalelismo)
         {
-            /* Obtém o corpo atual da iteração. */
-            Corpo corpo1 = Corpos[i];
-            double acumuladorForcaX = 0;
-            double acumuladorForcaY = 0;
-
-            /* Calcula a força gravitacional entre o corpo atual e todos os outros corpos. */
-            for (int j = 0; j < Corpos.Count; j++)
-            {
-                if (i == j) continue;
-
-                Corpo corpo2 = Corpos[j];
-
-                /* Calcula a diferença de posição entre os corpos para determinar a direção da força. */
-                double deltaX = corpo2.PosX - corpo1.PosX;
-                double deltaY = corpo2.PosY - corpo1.PosY;
-                double distancia = CalcularDistancia(corpo1, corpo2);
-
-                if (distancia == 0) continue;
-
-                /* Calcula a força gravitacional entre os dois corpos e a projeta nas direções X e Y. */
-                double forca = CalcularForcaGravitacional(corpo1, corpo2);
-                double direcaoX = deltaX / distancia;
-                double direcaoY = deltaY / distancia;
-
-                /* Acumula as componentes da força resultante sobre o corpo atual. */
-                acumuladorForcaX += forca * direcaoX;
-                acumuladorForcaY += forca * direcaoY;
-            }
-
-            /* Atualiza as forças resultantes do corpo atual com os valores acumulados. */
-            corpo1.ForcaX = acumuladorForcaX;
-            corpo1.ForcaY = acumuladorForcaY;
-
-            /* Atualiza as acelerações com base nas forças resultantes. */
-            corpo1.AceleracaoX = corpo1.ForcaX / corpo1.Massa;
-            corpo1.AceleracaoY = corpo1.ForcaY / corpo1.Massa;
-        });
-
-    }
-
-    /* Atualiza posições e velocidades utilizando o método Velocity Verlet. */
-    public void AtualizarPosicoes(double tempoEntreIteracoes)
-    {
-        /* Validar o intervalo de tempo antes de iniciar os cálculos. */
-        if (tempoEntreIteracoes <= 0 ||
-            !double.IsFinite(tempoEntreIteracoes))
-        {
-            throw new ArgumentException(
-                "O intervalo de tempo deve ser positivo e finito.");
+            CalcularForcasUmaThread();
+            return;
         }
 
-        /* Armazenar as acelerações anteriores de cada corpo. */
-        double[] aceleracoesAnterioresX = new double[Corpos.Count];
-        double[] aceleracoesAnterioresY = new double[Corpos.Count];
+        int quantidade = Corpos.Count;
+        var total = new (double X, double Y)[quantidade];
+        var trava = new object();
 
-        /* Atualizar as posições dos corpos. */
-        Parallel.For(0, Corpos.Count, i =>
-        {
-            Corpo corpo = Corpos[i];
-
-            /* Guardar as acelerações calculadas antes da atualização. */
-            aceleracoesAnterioresX[i] = corpo.AceleracaoX;
-            aceleracoesAnterioresY[i] = corpo.AceleracaoY;
-
-            /* Atualizar a posição utilizando a aceleração anterior. */
-            corpo.PosX += corpo.VelX * tempoEntreIteracoes
-                + 0.5 * corpo.AceleracaoX
-                * tempoEntreIteracoes * tempoEntreIteracoes;
-
-            corpo.PosY += corpo.VelY * tempoEntreIteracoes
-                + 0.5 * corpo.AceleracaoY
-                * tempoEntreIteracoes * tempoEntreIteracoes;
-        });
-
-        /* Recalcular as forças nas novas posições. */
-        CalcularForcas();
-
-        /* Atualiza as velocidades usando a média
-         * entre as acelerações anteriores e as novas acelerações. */
-        Parallel.For(0, Corpos.Count, i =>
-        {
-            Corpo corpo = Corpos[i];
-
-            corpo.VelX += 0.5 *
-                (aceleracoesAnterioresX[i] + corpo.AceleracaoX)
-                * tempoEntreIteracoes;
-
-            corpo.VelY += 0.5 *
-                (aceleracoesAnterioresY[i] + corpo.AceleracaoY)
-                * tempoEntreIteracoes;
-        });
-    }
-
-    /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
-    public void TratarColisoes()
-    {
-        bool houveFusao;
-
-        do
-        {
-            houveFusao = false;
-
-            for (int i = 0; i < Corpos.Count && !houveFusao; i++)
+        Parallel.For(0, quantidade,
+            () => new (double X, double Y)[quantidade],
+            (i, _, local) =>
             {
-                for (int j = i + 1; j < Corpos.Count; j++)
+                Corpo a = Corpos[i];
+                for (int j = i + 1; j < quantidade; j++)
                 {
-                    Corpo corpo1 = Corpos[i];
-                    Corpo corpo2 = Corpos[j];
-
-                    double somaRaios = corpo1.Raio + corpo2.Raio;
-
-                    double dx = corpo2.PosX - corpo1.PosX;
-                    double dy = corpo2.PosY - corpo1.PosY;
-
-                    double distanciaQuadrada = dx * dx + dy * dy;
-
-                    if (distanciaQuadrada <= somaRaios * somaRaios)
+                    Corpo b = Corpos[j];
+                    double dx = b.PosX - a.PosX;
+                    double dy = b.PosY - a.PosY;
+                    double d2 = dx * dx + dy * dy + Suavizacao * Suavizacao;
+                    double fator = G / (d2 * Math.Sqrt(d2));
+                    local[i].X += fator * dx * b.Massa;
+                    local[i].Y += fator * dy * b.Massa;
+                    local[j].X -= fator * dx * a.Massa;
+                    local[j].Y -= fator * dy * a.Massa;
+                }
+                return local;
+            },
+            local =>
+            {
+                lock (trava)
+                {
+                    for (int i = 0; i < quantidade; i++)
                     {
-                        /* Conservação da massa. */
-                        double massaTotal = corpo1.Massa + corpo2.Massa;
-
-                        /* Conservação do momento linear. */
-                        double novaVelX =
-                            (corpo1.Massa * corpo1.VelX +
-                             corpo2.Massa * corpo2.VelX) / massaTotal;
-
-                        double novaVelY =
-                            (corpo1.Massa * corpo1.VelY +
-                             corpo2.Massa * corpo2.VelY) / massaTotal;
-
-                        /* Centro de massa. */
-                        double novaPosX =
-                            (corpo1.Massa * corpo1.PosX +
-                             corpo2.Massa * corpo2.PosX) / massaTotal;
-
-                        double novaPosY =
-                            (corpo1.Massa * corpo1.PosY +
-                             corpo2.Massa * corpo2.PosY) / massaTotal;
-
-                        /* Conservação do volume para calcular a nova densidade. */
-                        double volumeTotal =
-                            corpo1.Massa / corpo1.Densidade +
-                            corpo2.Massa / corpo2.Densidade;
-
-                        double novaDensidade = massaTotal / volumeTotal;
-
-                        /* Nome do corpo resultante da fusão. */
-                        string novoNome =
-                            $"Fusão ({corpo1.Nome} + {corpo2.Nome})";
-
-                        if (novoNome.Length > 60)
-                            novoNome = novoNome.Substring(0, 60);
-
-                        /* Atualiza o primeiro corpo com os dados da fusão.
-                         * Mantém a mesma instância para preservar seu ID no gravador do banco. */
-                        corpo1.Nome = novoNome;
-                        corpo1.Massa = massaTotal;
-                        corpo1.Densidade = novaDensidade;
-
-                        corpo1.PosX = novaPosX;
-                        corpo1.PosY = novaPosY;
-
-                        corpo1.VelX = novaVelX;
-                        corpo1.VelY = novaVelY;
-
-                        corpo1.ForcaX = 0;
-                        corpo1.ForcaY = 0;
-                        corpo1.AceleracaoX = 0;
-                        corpo1.AceleracaoY = 0;
-
-                        /* Remove o segundo corpo, pois agora existe apenas um. */
-                        Corpos.RemoveAt(j);
-
-                        Console.WriteLine(
-                            $"Fusão realizada: {novoNome}");
-
-                        /* Reinicia a verificação para detectar novas colisões
-                         * envolvendo o corpo resultante. */
-                        houveFusao = true;
-                        break;
+                        total[i].X += local[i].X;
+                        total[i].Y += local[i].Y;
                     }
                 }
-            }
+            });
 
-        } while (houveFusao);
+        for (int i = 0; i < quantidade; i++)
+        {
+            Corpo corpo = Corpos[i];
+            (corpo.AceleracaoX, corpo.AceleracaoY) = total[i];
+            corpo.ForcaX = corpo.Massa * corpo.AceleracaoX;
+            corpo.ForcaY = corpo.Massa * corpo.AceleracaoY;
+        }
     }
 
-    /* Maior passo de tempo que ainda resolve o encontro mais próximo do universo.
-     * Para cada par usa o menor entre (a) o tempo para percorrer a distância atual na velocidade relativa
-     * e (b) o tempo dinâmico sqrt(d³ / G(m1+m2)). Corpos distantes quase nunca limitam o passo. */
-    private double PassoSeguro(double passoMaximo, double fator)
+    /* Mesmo cálculo de CalcularForcas, mas em uma única thread (versão N1).
+     * Percorre cada par de corpos uma única vez utilizando o (j = i + 1). */
+    private void CalcularForcasUmaThread()
     {
-        double passo = passoMaximo;
+        /* Zera as acelerações da iteração anterior para não acumular com o novo ciclo. */
+        foreach (Corpo corpo in Corpos)
+        {
+            corpo.AceleracaoX = 0;
+            corpo.AceleracaoY = 0;
+        }
 
         for (int i = 0; i < Corpos.Count; i++)
         {
             for (int j = i + 1; j < Corpos.Count; j++)
             {
-                /* Calcula a diferença de posição entre os corpos para determinar a distância entre eles. */
-                double dx = Corpos[j].PosX - Corpos[i].PosX;
-                double dy = Corpos[j].PosY - Corpos[i].PosY;
-                double d = Math.Sqrt(dx * dx + dy * dy);
-                if (d == 0) continue;
+                Corpo corpo1 = Corpos[i];
+                Corpo corpo2 = Corpos[j];
 
-                /* Calcula a diferença de velocidade entre os corpos para determinar a velocidade relativa. */
-                double dvx = Corpos[j].VelX - Corpos[i].VelX;
-                double dvy = Corpos[j].VelY - Corpos[i].VelY;
-                double v = Math.Sqrt(dvx * dvx + dvy * dvy);
+                double deltaX = corpo2.PosX - corpo1.PosX;
+                double deltaY = corpo2.PosY - corpo1.PosY;
+                double d2 = deltaX * deltaX + deltaY * deltaY + Suavizacao * Suavizacao;
+                double fator = G / (d2 * Math.Sqrt(d2));
 
-                /* Calcula o tempo de travessia baseado na distância e velocidade relativa. Se a velocidade for zero, define como infinito. */
-                double tempoTravessia = v > 0 ? d / v : double.MaxValue;
-                double tempoDinamico = Math.Sqrt(d * d * d / (G * (Corpos[i].Massa + Corpos[j].Massa)));
-                passo = Math.Min(passo, fator * Math.Min(tempoTravessia, tempoDinamico));
+                /* Terceira Lei de Newton (Ação e Reação): cada corpo é puxado na direção do outro. */
+                corpo1.AceleracaoX += fator * deltaX * corpo2.Massa;
+                corpo1.AceleracaoY += fator * deltaY * corpo2.Massa;
+                corpo2.AceleracaoX -= fator * deltaX * corpo1.Massa;
+                corpo2.AceleracaoY -= fator * deltaY * corpo1.Massa;
             }
         }
 
-        return passo;
+        foreach (Corpo corpo in Corpos)
+        {
+            corpo.ForcaX = corpo.Massa * corpo.AceleracaoX;
+            corpo.ForcaY = corpo.Massa * corpo.AceleracaoY;
+        }
     }
 
-    /* Avança UMA iteração (tempoEntreIteracoes), dividindo-a em subpassos quando há corpos próximos.
-     * O número de iterações gravadas e o tempo entre elas não mudam; só a precisão interna melhora.
-     * Cada subpasso: posições (Velocity Verlet) -> colisões -> forças. Antes da primeira chamada,
-     * CalcularForcas() precisa ter sido executado (o Velocity Verlet usa as acelerações atuais).
-     * Os cronômetros são opcionais e acumulam o tempo de cada fase, para o relatório de desempenho. */
+    public void AtualizarPosicoes(double passo)
+    {
+        if (!double.IsFinite(passo) || passo <= 0)
+            throw new ArgumentException("O intervalo de tempo deve ser positivo e finito.");
+
+        foreach (Corpo corpo in Corpos)
+        {
+            corpo.VelX += corpo.AceleracaoX * passo;
+            corpo.VelY += corpo.AceleracaoY * passo;
+            corpo.PosX += corpo.VelX * passo;
+            corpo.PosY += corpo.VelY * passo;
+        }
+    }
+
+    private static double RaioColisao(Corpo corpo) =>
+        MetrosPorUnidade * Math.Max(2, 2.8 * Math.Cbrt(corpo.Massa / MassaPorUnidade * 3000 / corpo.Densidade));
+
+    private static bool Sobrepostos(Corpo a, Corpo b, double somaRaios)
+    {
+        double dx = b.PosX - a.PosX;
+        double dy = b.PosY - a.PosY;
+        return dx * dx + dy * dy < somaRaios * somaRaios;
+    }
+
+    public void TratarColisoes()
+    {
+        FusoesUltimaIteracao = 0;
+        int quantidade = Corpos.Count;
+        if (quantidade < 2) return;
+
+        var raios = new double[quantidade];
+        for (int i = 0; i < quantidade; i++)
+            raios[i] = RaioColisao(Corpos[i]);
+
+        /* Na versão N2 a busca pelos pares em contato roda em paralelo.
+         * Na versão N1 ela é feita dentro do próprio laço das fusões, abaixo. */
+        var candidatos = new List<int>?[quantidade];
+        if (UsarParalelismo)
+        {
+            Parallel.For(0, quantidade, i =>
+            {
+                for (int j = i + 1; j < quantidade; j++)
+                {
+                    if (Sobrepostos(Corpos[i], Corpos[j], raios[i] + raios[j]))
+                        (candidatos[i] ??= new List<int>()).Add(j);
+                }
+            });
+        }
+
+        // As fusoes ocorrem em ordem e revalidam o contato.
+        var absorvidos = new HashSet<Corpo>();
+        for (int i = 0; i < quantidade; i++)
+        {
+            Corpo a = Corpos[i];
+            if (absorvidos.Contains(a)) continue;
+
+            /* N2: se a busca paralela não achou nenhum contato, não há o que fundir.
+             * Se achou, começa do primeiro contato encontrado. A partir dele os corpos
+             * seguintes são conferidos de novo, porque depois de uma fusão o corpo "a"
+             * fica maior e pode alcançar outros. Assim N1 e N2 dão o mesmo resultado. */
+            int inicio = i + 1;
+            if (UsarParalelismo)
+            {
+                if (candidatos[i] is not { } pares) continue;
+                inicio = pares[0];
+            }
+
+            for (int j = inicio; j < quantidade; j++)
+            {
+                Corpo b = Corpos[j];
+                if (absorvidos.Contains(b) || !Sobrepostos(a, b, raios[i] + raios[j])) continue;
+
+                Fundir(a, b);
+                raios[i] = RaioColisao(a);
+                absorvidos.Add(b);
+                FusoesUltimaIteracao++;
+            }
+        }
+        Corpos.RemoveAll(absorvidos.Contains);
+    }
+
+    private static void Fundir(Corpo a, Corpo b)
+    {
+        double massa = a.Massa + b.Massa;
+        double pesoA = a.Massa / massa;
+        double pesoB = b.Massa / massa;
+
+        if (b.Massa > a.Massa) a.Nome = b.Nome;
+        a.PosX = a.PosX * pesoA + b.PosX * pesoB;
+        a.PosY = a.PosY * pesoA + b.PosY * pesoB;
+        a.VelX = a.VelX * pesoA + b.VelX * pesoB;
+        a.VelY = a.VelY * pesoA + b.VelY * pesoB;
+        a.Densidade = a.Densidade * pesoA + b.Densidade * pesoB;
+        a.Massa = massa;
+    }
+
     public void AvancarIteracao(
         double tempoEntreIteracoes,
         Stopwatch? tempoForcas = null,
         Stopwatch? tempoPosicoes = null,
         Stopwatch? tempoColisoes = null)
     {
-        const double fatorSeguranca = 0.02;  /* fração do tempo característico usada em cada subpasso */
-        const int maximoSubpassos = 500;     /* limite para que o custo nunca exploda */
+        tempoPosicoes?.Start();
+        AtualizarPosicoes(tempoEntreIteracoes);
+        tempoPosicoes?.Stop();
 
-        /* Calcula o passo mínimo permitido para cada subpasso, garantindo que não haja mais de maximoSubpassos. */
-        double minimo = tempoEntreIteracoes / maximoSubpassos;
-        double restante = tempoEntreIteracoes;
+        tempoColisoes?.Start();
+        TratarColisoes();
+        tempoColisoes?.Stop();
 
-        /* Enquanto houver tempo restante para avançar, 
-         * realiza subpassos de atualização de posições, 
-         * tratamento de colisões e cálculo de forças. */
-        while (restante > tempoEntreIteracoes * 1e-12)
-        {
-            tempoForcas?.Start();
-            double passo = Math.Min(restante,
-                Math.Max(PassoSeguro(tempoEntreIteracoes, fatorSeguranca), minimo));
-            tempoForcas?.Stop();
-
-            /* Atualiza as posições dos corpos com base no passo calculado. */
-            tempoPosicoes?.Start();
-            AtualizarPosicoes(passo);
-            tempoPosicoes?.Stop();
-
-            /* Trata as colisões entre os corpos após a atualização das posições. */
-            tempoColisoes?.Start();
-            TratarColisoes();
-            tempoColisoes?.Stop();
-
-            /* Recalcula as forças após o tratamento das colisões. */
-            tempoForcas?.Start();
-            CalcularForcas();
-            tempoForcas?.Stop();
-
-            /* Reduz o tempo restante pelo passo que acabou de ser processado. */
-            restante -= passo;
-        }
+        tempoForcas?.Start();
+        CalcularForcas();
+        tempoForcas?.Stop();
     }
 
     /* Exibe o estado atual dos corpos. */
@@ -377,7 +293,7 @@ public class Universo
         Stopwatch tempoPosicoes = new Stopwatch();
         Stopwatch tempoColisoes = new Stopwatch();
 
-        /* Bloco de Try -Finally para garantir que o gravador finalize a simulação e 
+        /* Bloco de Try -Finally para garantir que o gravador finalize a simulação e
          * feche a conexão com o banco, mesmo se ocorrer algum erro durante a execução. */
         try
         {
@@ -390,27 +306,22 @@ public class Universo
             /* Variável para acumular o tempo decorrido da simulação. */
             double tempoDecorrido = 0;
 
-            /* Calcular as forças iniciais antes da primeira iteração.
-             * O Velocity Verlet precisa das acelerações iniciais. */
             tempoForcas.Start();
             CalcularForcas();
             tempoForcas.Stop();
 
-            /* Executar as iterações da simulação utilizando Velocity Verlet. */
             for (int i = 1; i <= iteracoes; i++)
             {
                 /* Atualizar o tempo decorrido com base no tempo entre iterações. */
                 tempoDecorrido += tempoEntreIteracoes;
 
-                /* Avançar UMA iteração. O método divide o intervalo em subpassos quando há corpos próximos
-                 * (posições Velocity Verlet -> colisões -> forças) e acumula o tempo de cada fase. */
                 AvancarIteracao(tempoEntreIteracoes, tempoForcas, tempoPosicoes, tempoColisoes);
 
                 /* Gravar o histórico do passo no MySQL. */
                 gravador.GravarPasso(i, tempoDecorrido, Corpos);
             }
         }
-        /* Finally garante que o gravador finalize a simulação e 
+        /* Finally garante que o gravador finalize a simulação e
          * feche a conexão com o banco, mesmo se ocorrer algum erro durante a execução. */
         finally
         {
@@ -422,7 +333,7 @@ public class Universo
         /* Calcula o tempo total gasto nas fases de cálculo de forças, atualização de posições e tratamento de colisões. */
         TimeSpan calculo = tempoForcas.Elapsed + tempoPosicoes.Elapsed + tempoColisoes.Elapsed;
 
-        /* Exibe o tempo total da simulação e o tempo gasto em cada fase (cálculo de forças, 
+        /* Exibe o tempo total da simulação e o tempo gasto em cada fase (cálculo de forças,
          * atualização de posições, tratamento de colisões e gravação no banco). */
         Console.WriteLine();
         Console.WriteLine($"[DESEMPENHO N2] Tempo total: {cronometro.Elapsed.TotalMilliseconds:F2} ms ({cronometro.Elapsed.TotalSeconds:F2} s)");
@@ -434,36 +345,32 @@ public class Universo
         Console.WriteLine();
     }
 
-    /* Gera corpos aleatórios para a simulação. */
     public void GerarCorposAleatorios(int quantidade)
     {
-        Random random = new Random();
+        Random random = Random.Shared;
+        double[] densidades = { 500, 1000, 2000, 3000, 5000, 7874, 11340 };
+        int quantidadeGigantes = Math.Max(2, quantidade / 5);
+        const double larguraUtil = 1050 - 100;
+        const double alturaUtil = 650 - 100;
+        const double escalaVelocidade = MetrosPorUnidade / SegundosPorUnidade;
 
-        /* Gera corpos com propriedades aleatórias dentro de intervalos definidos. */
         for (int i = 0; i < quantidade; i++)
         {
-            /* Gera um nome único para cada corpo. */
-            string nome = $"Corpo {i + 1}";
-            double massa = random.NextDouble() * (1e25 - 1e22) + 1e22;      /* 10^22 a 10^25 kg */
-            double densidade = random.NextDouble() * (6000 - 3000) + 3000;  /* 3000 a 6000 kg/m³ */
-            double posX = random.NextDouble() * (5e9 - (-5e9)) + (-5e9);    /* ±5 bilhões de metros */
-            double posY = random.NextDouble() * (5e9 - (-5e9)) + (-5e9);
-            double velX = random.NextDouble() * (200 - (-200)) + (-200);    /* ±200 m/s */
-            double velY = random.NextDouble() * (200 - (-200)) + (-200);
+            bool gigante = i < quantidadeGigantes;
+            double expoente = gigante
+                ? 2.0 + random.NextDouble() * 1.2
+                : 0.4 + random.NextDouble() * 1.6;
+            double massa = Math.Pow(10, expoente) * MassaPorUnidade;
+            double densidade = densidades[random.Next(densidades.Length)] * (0.7 + random.NextDouble() * 0.6);
+            double velocidade = random.NextDouble() * 80 * escalaVelocidade;
+            double angulo = random.NextDouble() * Math.Tau;
+            double posX = (random.NextDouble() - 0.5) * larguraUtil * MetrosPorUnidade;
+            double posY = (random.NextDouble() - 0.5) * alturaUtil * MetrosPorUnidade;
+            string prefixo = gigante ? "Gigante" : "Corpo";
 
-            /* Cria um novo corpo com as propriedades geradas aleatoriamente. */
-            Corpo corpo = new Corpo(
-                nome,
-                massa,
-                densidade,
-                posX,
-                posY,
-                velX,
-                velY
-            );
-
-            /* Adiciona o corpo gerado aleatoriamente ao universo. */
-            AdicionarCorpo(corpo);
+            AdicionarCorpo(new Corpo($"{prefixo}-{i + 1:D3}", massa,
+                Math.Clamp(densidade, 500, 15000), posX, posY,
+                Math.Cos(angulo) * velocidade, Math.Sin(angulo) * velocidade));
         }
     }
 }
