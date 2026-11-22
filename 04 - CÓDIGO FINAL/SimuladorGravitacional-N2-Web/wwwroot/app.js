@@ -373,7 +373,7 @@ corretamente mesmo que a ordem dos corpos mude. */
 async function loop() {
     if (!running) return;
     await advance(Number($('speed').value));
-    if (running) timer = setTimeout(loop, 40);
+    if (running) timer = setTimeout(loop, 10);
 }
 
 /* Função para iniciar a simulação, alternando entre iniciar, pausar e reiniciar com base no estado atual. */

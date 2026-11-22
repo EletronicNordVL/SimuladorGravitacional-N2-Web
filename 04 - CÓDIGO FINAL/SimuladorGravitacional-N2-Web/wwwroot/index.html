@@ -42,7 +42,7 @@
                 <label class="field-label" for="iterations">Limite de iterações</label><input id="iterations" type="number" min="1" max="1000000" value="300">
                 <label class="field-label" for="timestep">Passo de tempo <span>s</span></label><input id="timestep" type="number" min="0.001" max="86400" step="any" value="3600"><p class="field-note">Tempo físico avançado a cada iteração.</p>
                 <label class="field-label" for="speed">Velocidade de reprodução <span id="speed-label">1×</span></label>
-                <input id="speed" type="range" min="1" max="10" value="1"><div class="range-labels"><span>1×</span><span>10×</span></div>
+                <input id="speed" type="range" min="1" max="50" value="1"><div class="range-labels"><span>1×</span><span>50×</span></div>
                 <label class="toggle-row" for="record">Gravar iterações no banco <input type="checkbox" class="switch" id="record" checked></label>
                 <p class="field-note">Grava todos os corpos em cada iteração no MySQL, para rever a simulação depois com ▶ Replay.</p>
                 <label class="toggle-row" for="parallel">Processamento paralelo (N2) <input type="checkbox" class="switch" id="parallel" checked></label>

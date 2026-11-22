@@ -61,6 +61,11 @@ CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
 /* A) Ver a simulação criada */
 SELECT * FROM Simulacao;
 
+/* A.1) Ver a última iteração da Simulção */
+SELECT *
+FROM Simulacao
+where id_simulacao = '56';
+
 /* B) Ver os corpos da simulação */
 SELECT * FROM Corpo;
 
@@ -77,6 +82,39 @@ SELECT COUNT(*) FROM EstadoCorpo;
 /* C.2) Ver o total de corpos e o total de seus estados */
 SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
+
+/* C.3) Consultar Iterações
+/* Informe o ID da simulação desejada. */
+SELECT * FROM Simulacao;
+SET @id_simulacao = 54;
+
+/* Consultar a última iteração gravada de uma simulação */
+SELECT ec.* FROM EstadoCorpo ec
+INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+WHERE c.id_simulacao = 56
+AND ec.num_passo = (
+    SELECT MAX(ec2.num_passo)
+    FROM EstadoCorpo ec2
+    INNER JOIN Corpo c2 ON c2.id_corpo = ec2.corpo_id
+    WHERE c2.id_simulacao = 56
+);
+
+/* C.4) Select Alternativo de encontrar última iteração */
+/* Verifica as últimas simulações criadas. */
+SELECT
+    s.id_simulacao,
+    s.nome,
+    s.qtd_corpos,
+    COUNT(DISTINCT ec.num_passo) AS total_iteracoes_gravadas,
+    MAX(ec.num_passo) AS ultima_iteracao
+FROM Simulacao s
+LEFT JOIN Corpo c
+    ON c.id_simulacao = s.id_simulacao
+LEFT JOIN EstadoCorpo ec
+    ON ec.corpo_id = c.id_corpo
+GROUP BY s.id_simulacao, s.nome, s.qtd_corpos
+ORDER BY s.id_simulacao DESC
+LIMIT 10;
 
 /* D) Comando para apagar a simulação e/ou simulações por meio do ID */
 /* DELETE FROM Simulacao WHERE id_simulacao = 9;
