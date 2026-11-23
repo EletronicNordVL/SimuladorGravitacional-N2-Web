@@ -162,6 +162,7 @@ public class Universo
         {
             Corpo corpo = Corpos[i];
 
+            /* Atualiza a velocidade utilizando a média das acelerações anterior e atual. */
             corpo.VelX += 0.5 *
                 (aceleracoesAnterioresX[i] + corpo.AceleracaoX)
                 * tempoEntreIteracoes;
@@ -272,6 +273,7 @@ public class Universo
     /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
     public void TratarColisoes()
     {
+        /* Booleano se houve fusão ou não */
         bool houveFusao;
         do
         {

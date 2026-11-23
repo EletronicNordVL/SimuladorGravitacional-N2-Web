@@ -1,0 +1,672 @@
+diff --git "a/01 - MODELAGEM DO BANCO DE DADOS/MODELO F\303\215SICO - TRABALHO N2.sql" "b/01 - MODELAGEM DO BANCO DE DADOS/MODELO F\303\215SICO - TRABALHO N2.sql"
+index 18f5bbb..0afcc5a 100644
+--- "a/01 - MODELAGEM DO BANCO DE DADOS/MODELO F\303\215SICO - TRABALHO N2.sql"	
++++ "b/01 - MODELAGEM DO BANCO DE DADOS/MODELO F\303\215SICO - TRABALHO N2.sql"	
+@@ -29,7 +29,19 @@ CREATE TABLE EstadoCorpo (
+     aceleracao_x DOUBLE NOT NULL,
+     aceleracao_y DOUBLE NOT NULL,
+     num_passo INT NOT NULL,
+-    corpo_id INT NOT NULL
++    corpo_id INT NOT NULL,
++    massa DOUBLE NOT NULL,
++    densidade DOUBLE NOT NULL
++);
++
++CREATE TABLE Fusao (
++    id_fusao INT PRIMARY KEY AUTO_INCREMENT,
++    num_passo INT NOT NULL,
++    id_corpo_sobrevivente INT NOT NULL,
++    id_corpo_absorvido INT NOT NULL,
++    nome_resultante VARCHAR(255) NOT NULL,
++    massa_resultante DOUBLE NOT NULL,
++    quantidade_resultante INT NOT NULL
+ );
+  
+ ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_3
+@@ -42,4 +54,16 @@ ALTER TABLE EstadoCorpo ADD CONSTRAINT FK_EstadoCorpo_2
+     REFERENCES Corpo (id_corpo)
+     ON DELETE CASCADE;
+     
+-CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);
+\ No newline at end of file
++ALTER TABLE Fusao ADD CONSTRAINT FK_Fusao_Sobrevivente
++    FOREIGN KEY (id_corpo_sobrevivente)
++    REFERENCES Corpo (id_corpo)
++    ON DELETE CASCADE;
++
++ALTER TABLE Fusao ADD CONSTRAINT FK_Fusao_Absorvido
++    FOREIGN KEY (id_corpo_absorvido)
++    REFERENCES Corpo (id_corpo)
++    ON DELETE CASCADE;
++
++CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);
++
++CREATE INDEX idx_fusao_sobrevivente_passo ON Fusao (id_corpo_sobrevivente, num_passo);
+\ No newline at end of file
+diff --git a/02 - SCRIPT SQL/SIMULADOR_GRAVITACIONAL_SCRIPT.sql b/02 - SCRIPT SQL/SIMULADOR_GRAVITACIONAL_SCRIPT.sql
+index 60a6ab5..85fe307 100644
+--- a/02 - SCRIPT SQL/SIMULADOR_GRAVITACIONAL_SCRIPT.sql	
++++ b/02 - SCRIPT SQL/SIMULADOR_GRAVITACIONAL_SCRIPT.sql	
+@@ -35,7 +35,21 @@ CREATE TABLE EstadoCorpo (
+   forca_x DOUBLE NOT NULL, 
+   forca_y DOUBLE NOT NULL,
+   aceleracao_x DOUBLE NOT NULL,
+-  aceleracao_y DOUBLE NOT NULL
++  aceleracao_y DOUBLE NOT NULL,
++  massa DOUBLE NOT NULL,
++  densidade DOUBLE NOT NULL
++);
++
++/* 4.1 Tabela de Fusao: registra cada fusão de corpos (qual corpo absorveu qual, em que iteração
++   e como ficou o corpo resultante). A massa e a densidade de cada iteração ficam em EstadoCorpo. */
++CREATE TABLE Fusao (
++  id_fusao INT PRIMARY KEY AUTO_INCREMENT,
++  num_passo INT NOT NULL,
++  id_corpo_sobrevivente INT NOT NULL,
++  id_corpo_absorvido INT NOT NULL,
++  nome_resultante VARCHAR(255) NOT NULL,
++  massa_resultante DOUBLE NOT NULL,
++  quantidade_resultante INT NOT NULL
+ );
+ 
+ /* 5. Definição das Chaves Estrangeiras (FKs) */
+@@ -51,18 +65,28 @@ ALTER TABLE EstadoCorpo
+    REFERENCES Corpo (id_corpo) 
+    ON DELETE CASCADE;
+    
++ALTER TABLE Fusao
++   ADD CONSTRAINT FK_Fusao_Sobrevivente
++   FOREIGN KEY (id_corpo_sobrevivente)
++   REFERENCES Corpo (id_corpo)
++   ON DELETE CASCADE;
++
++ALTER TABLE Fusao
++   ADD CONSTRAINT FK_Fusao_Absorvido
++   FOREIGN KEY (id_corpo_absorvido)
++   REFERENCES Corpo (id_corpo)
++   ON DELETE CASCADE;
++
+ /* 6. Criação de Indice de Performance para Otimizar a Leitura do Replay */
+ CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
+ 
++/* Índice para consultar as fusões de um corpo por iteração (usado pelo replay). */
++CREATE INDEX idx_fusao_sobrevivente_passo ON Fusao(id_corpo_sobrevivente, num_passo);
++
+ /* 7. Lista de Selects */
+ /* A) Ver a simulação criada */
+ SELECT * FROM Simulacao;
+ 
+-/* A.1) Ver a última iteração da Simulção */
+-SELECT *
+-FROM Simulacao
+-where id_simulacao = '56';
+-
+ /* B) Ver os corpos da simulação */
+ SELECT * FROM Corpo;
+ 
+@@ -80,36 +104,59 @@ SELECT COUNT(*) FROM EstadoCorpo;
+ SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+ GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
+ 
+-/* C.3) Consultar Iterações
+-/* Informe o ID da simulação desejada. */
+-SELECT * FROM Simulacao;
+-SET @id_simulacao = 54;
+-
+-/* Consultar a última iteração gravada de uma simulação */
+-SELECT ec.* FROM EstadoCorpo ec
+-INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+-WHERE c.id_simulacao = 56
+-AND ec.num_passo = (
+-    SELECT MAX(ec2.num_passo)
+-    FROM EstadoCorpo ec2
+-    INNER JOIN Corpo c2 ON c2.id_corpo = ec2.corpo_id
+-    WHERE c2.id_simulacao = 56
+-);
++/* H) Últimas coisas de cada categoria: última simulação, última iteração e último estado de cada corpo.
++      Para consultar outra simulação, troque a primeira linha abaixo por, por exemplo: SET @id_simulacao = 54; */
++SET @id_simulacao = (SELECT MAX(id_simulacao) FROM Simulacao);
+ 
+-/* C.4) Select Alternativo de encontrar última iteração */
+-/* Verifica as últimas simulações criadas. */
+-SELECT
+-    s.id_simulacao,
+-    s.nome,
+-    s.qtd_corpos,
+-    COUNT(DISTINCT ec.num_passo) AS total_iteracoes_gravadas,
+-    MAX(ec.num_passo) AS ultima_iteracao
++/* H.1) A última simulação criada */
++SELECT id_simulacao, nome, data_criacao, qtd_corpos, qtd_iteracoes
++FROM Simulacao
++WHERE id_simulacao = @id_simulacao;
++
++/* H.2) A última iteração gravada dessa simulação */
++SET @ultimo_passo = (SELECT MAX(ec.num_passo)
++                     FROM EstadoCorpo ec
++                     INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
++                     WHERE c.id_simulacao = @id_simulacao);
++SELECT @ultimo_passo AS ultima_iteracao;
++
++/* H.3) O último estado de CADA corpo, inclusive dos que foram absorvidos em uma fusão */
++SELECT c.id_corpo,
++       COALESCE((SELECT f.nome_resultante FROM Fusao f
++                 WHERE f.id_corpo_sobrevivente = c.id_corpo
++                 ORDER BY f.num_passo DESC, f.id_fusao DESC LIMIT 1), c.nome) AS corpo,
++       IF(ult.num_passo = @ultimo_passo,
++          'ATIVO',
++          CONCAT('ABSORVIDO no passo ', ult.num_passo, ' por ', sob.nome)) AS situacao,
++       ult.num_passo AS ultimo_passo_do_corpo,
++       ec.massa, ec.densidade, ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
++FROM Corpo c
++INNER JOIN (SELECT corpo_id, MAX(num_passo) AS num_passo
++            FROM EstadoCorpo
++            WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = @id_simulacao)
++            GROUP BY corpo_id) ult ON ult.corpo_id = c.id_corpo
++INNER JOIN EstadoCorpo ec ON ec.corpo_id = ult.corpo_id AND ec.num_passo = ult.num_passo
++LEFT JOIN Fusao fa ON fa.id_corpo_absorvido = c.id_corpo
++LEFT JOIN Corpo sob ON sob.id_corpo = fa.id_corpo_sobrevivente
++WHERE c.id_simulacao = @id_simulacao
++ORDER BY c.id_corpo;
++
++/* H.4) As fusões ocorridas na simulação: quem absorveu quem e em qual iteração */
++SELECT f.num_passo, a.nome AS corpo_que_absorveu, b.nome AS corpo_absorvido,
++       f.nome_resultante, f.massa_resultante, f.quantidade_resultante
++FROM Fusao f
++INNER JOIN Corpo a ON a.id_corpo = f.id_corpo_sobrevivente
++INNER JOIN Corpo b ON b.id_corpo = f.id_corpo_absorvido
++WHERE a.id_simulacao = @id_simulacao
++ORDER BY f.num_passo, f.id_fusao;
++
++/* H.5) As 10 últimas simulações e a última iteração gravada de cada uma */
++SELECT s.id_simulacao, s.nome, s.qtd_corpos, s.qtd_iteracoes,
++       (SELECT MAX(ec.num_passo)
++        FROM EstadoCorpo ec
++        WHERE ec.corpo_id = (SELECT MIN(c.id_corpo) FROM Corpo c WHERE c.id_simulacao = s.id_simulacao)
++       ) AS ultima_iteracao_gravada
+ FROM Simulacao s
+-LEFT JOIN Corpo c
+-    ON c.id_simulacao = s.id_simulacao
+-LEFT JOIN EstadoCorpo ec
+-    ON ec.corpo_id = c.id_corpo
+-GROUP BY s.id_simulacao, s.nome, s.qtd_corpos
+ ORDER BY s.id_simulacao DESC
+ LIMIT 10;
+ 
+@@ -131,7 +178,7 @@ DESCRIBE EstadoCorpo;
+ DESCRIBE Corpo;
+ 
+ /* F.2) Um Select para testar o Replay */
+-SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = 19);
++SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = @id_simulacao);
+ 
+ /* G) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
+ DELIMITER $$
+diff --git "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Corpo.cs" "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Corpo.cs"
+index baac056..0603d6c 100644
+--- "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Corpo.cs"	
++++ "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Corpo.cs"	
+@@ -38,6 +38,14 @@ public class Corpo
+  * É preservado no JSON para permitir retomar a gravação após uma fusão. */
+     public int IdCorpoBanco { get; set; }
+ 
++    /* Quantidade de corpos originais que já foram fundidos neste corpo (1 = nunca se fundiu).
++     * Um "super corpo" é um corpo com QuantidadeFundidos maior ou igual a 2. */
++    public int QuantidadeFundidos { get; set; } = 1;
++
++    /* Nome que o corpo tinha antes de qualquer fusão. O nome exibido (Nome) muda a cada fusão,
++     * e este campo guarda a base para montar o nome do super corpo sem que ele cresça sem parar. */
++    public string NomeOriginal { get; set; } = string.Empty;
++
+     /* É medida em quilogramas (kg) e representa a quantidade de matéria contida no corpo. */
+     public double Massa
+     {
+@@ -120,6 +128,7 @@ public class Corpo
+     {
+         /* Inicializa as propriedades do corpo com os valores fornecidos. */
+         Nome = nome; /* Define o nome do corpo, validando se não é vazio ou nulo. */
++        NomeOriginal = nome; /* Guarda o nome antes de qualquer fusão. */
+         Massa = massa; /* Define a massa do corpo, validando se é maior que zero. */
+         Densidade = densidade; /* Define a densidade do corpo, validando se é maior que zero e não excede o limite máximo. */
+         PosX = posX; /* Define a posição inicial no eixo X. */
+diff --git "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/GravadorUniversoBD.cs" "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/GravadorUniversoBD.cs"
+index b8dd40e..484bf2b 100644
+--- "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/GravadorUniversoBD.cs"	
++++ "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/GravadorUniversoBD.cs"	
+@@ -55,6 +55,9 @@ private const int LinhasPorBloco = 500;
+         /* Campos públicos para armazenar as informações do estado do corpo em um passo da simulação. */
+         public readonly double ForcaX, ForcaY, AceleracaoX, AceleracaoY;
+ 
++        /* Massa e densidade do corpo NESTE passo: mudam quando o corpo se funde com outro. */
++        public readonly double Massa, Densidade;
++
+         /* Construtor da estrutura LinhaEstado, que inicializa os campos com os valores fornecidos. */
+         public LinhaEstado(int corpoId, int numPasso, double tempoDecorrido, Corpo c)
+         {
+@@ -65,6 +68,7 @@ private const int LinhasPorBloco = 500;
+             VelX = c.VelX; VelY = c.VelY;
+             ForcaX = c.ForcaX; ForcaY = c.ForcaY;
+             AceleracaoX = c.AceleracaoX; AceleracaoY = c.AceleracaoY;
++            Massa = c.Massa; Densidade = c.Densidade;
+         }
+     }
+ 
+@@ -263,7 +267,14 @@ private const int LinhasPorBloco = 500;
+          * A consulta seleciona informações como nome, massa, densidade, posição, velocidade, 
+          * força e aceleração. */
+         string sql = @"
+-       SELECT c.id_corpo, c.nome, c.massa, c.densidade,
++       SELECT c.id_corpo, c.nome AS nome_original,
++       COALESCE((SELECT f.nome_resultante FROM Fusao f
++                 WHERE f.id_corpo_sobrevivente = c.id_corpo AND f.num_passo <= @numPasso
++                 ORDER BY f.num_passo DESC, f.id_fusao DESC LIMIT 1), c.nome) AS nome,
++       COALESCE((SELECT f.quantidade_resultante FROM Fusao f
++                 WHERE f.id_corpo_sobrevivente = c.id_corpo AND f.num_passo <= @numPasso
++                 ORDER BY f.num_passo DESC, f.id_fusao DESC LIMIT 1), 1) AS quantidade_fundidos,
++       ec.massa, ec.densidade,
+        ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
+        ec.forca_x, ec.forca_y,
+        ec.aceleracao_x, ec.aceleracao_y
+@@ -305,6 +316,11 @@ private const int LinhasPorBloco = 500;
+                     /* Recupera o ID original do corpo no banco de dados. */
+                     corpo.IdCorpoBanco = reader.GetInt32("id_corpo");
+ 
++                    /* Recupera o nome original e a quantidade de corpos já fundidos neste passo
++                     * (a massa e a densidade já vieram do estado do passo). */
++                    corpo.NomeOriginal = reader.GetString("nome_original");
++                    corpo.QuantidadeFundidos = reader.GetInt32("quantidade_fundidos");
++
+                     /* Atribui os valores de força e aceleração obtidos do banco de dados 
+                      * às propriedades correspondentes do objeto Corpo. */
+                     corpo.ForcaX = reader.GetDouble("forca_x");
+@@ -397,6 +413,19 @@ private const int LinhasPorBloco = 500;
+                 cmd.Parameters.AddWithValue("@ultimoPasso", ultimoPasso);
+                 cmd.ExecuteNonQuery();
+             }
++
++            /* Remove também as fusões registradas depois do último passo confirmado,
++             * para que repetir a chamada não duplique fusões. */
++            using (MySqlCommand cmd = new MySqlCommand(@"
++            DELETE f FROM Fusao f
++            INNER JOIN Corpo c ON c.id_corpo = f.id_corpo_sobrevivente
++            WHERE c.id_simulacao = @idSimulacao
++              AND f.num_passo > @ultimoPasso;", conexao))
++            {
++                cmd.Parameters.AddWithValue("@idSimulacao", idSimulacao);
++                cmd.Parameters.AddWithValue("@ultimoPasso", ultimoPasso);
++                cmd.ExecuteNonQuery();
++            }
+         }
+ 
+         /* Reconstrói o mapa usando os IDs que acompanham os próprios corpos. */
+@@ -418,6 +447,19 @@ private const int LinhasPorBloco = 500;
+         public int Passo { get; set; }
+         public double Tempo { get; set; }
+         public List<double[]> Corpos { get; set; } = new List<double[]>();
++
++        /* Fusões que aconteceram neste passo (vazio na maioria dos passos). */
++        public List<FusaoReplay> Fusoes { get; set; } = new List<FusaoReplay>();
++    }
++
++    /* Uma fusão do replay: IDs do corpo que sobreviveu e do absorvido, o nome do super corpo
++     * e a quantidade de corpos originais que ele reúne. */
++    public class FusaoReplay
++    {
++        public int Sobrevivente { get; set; }
++        public int Absorvido { get; set; }
++        public string Nome { get; set; } = string.Empty;
++        public int Quantidade { get; set; }
+     }
+ 
+     /* Carrega do banco, em uma única consulta, um bloco de passos consecutivos de uma simulação
+@@ -430,7 +472,8 @@ private const int LinhasPorBloco = 500;
+         string sql = @"
+ SELECT ec.num_passo, ec.tempo_decorrido,
+        c.id_corpo,
+-       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y
++       ec.pos_x, ec.pos_y, ec.vel_x, ec.vel_y,
++       ec.massa, ec.densidade
+         FROM EstadoCorpo ec
+         INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
+         WHERE c.id_simulacao = @idSimulacao
+@@ -468,10 +511,45 @@ SELECT ec.num_passo, ec.tempo_decorrido,
+     reader.GetDouble("pos_x"),
+     reader.GetDouble("pos_y"),
+     reader.GetDouble("vel_x"),
+-    reader.GetDouble("vel_y")
++    reader.GetDouble("vel_y"),
++    reader.GetDouble("massa"),
++    reader.GetDouble("densidade")
+                     });
+                 }
+             }
++
++            /* Busca as fusões que aconteceram nesse bloco de passos e as anexa ao quadro do passo correspondente. */
++            using (MySqlCommand cmdFusoes = new MySqlCommand(@"
++            SELECT f.num_passo, f.id_corpo_sobrevivente, f.id_corpo_absorvido,
++                   f.nome_resultante, f.quantidade_resultante
++            FROM Fusao f
++            INNER JOIN Corpo c ON c.id_corpo = f.id_corpo_sobrevivente
++            WHERE c.id_simulacao = @idSimulacao
++              AND f.num_passo >= @passoInicial
++              AND f.num_passo < @passoFinal
++            ORDER BY f.num_passo, f.id_fusao;", conexao))
++            {
++                cmdFusoes.Parameters.AddWithValue("@idSimulacao", idSimulacao);
++                cmdFusoes.Parameters.AddWithValue("@passoInicial", passoInicial);
++                cmdFusoes.Parameters.AddWithValue("@passoFinal", passoInicial + quantidade);
++
++                using (MySqlDataReader reader = cmdFusoes.ExecuteReader())
++                {
++                    while (reader.Read())
++                    {
++                        int passo = reader.GetInt32("num_passo");
++                        QuadroReplay? quadro = quadros.Find(q => q.Passo == passo);
++
++                        quadro?.Fusoes.Add(new FusaoReplay
++                        {
++                            Sobrevivente = reader.GetInt32("id_corpo_sobrevivente"),
++                            Absorvido = reader.GetInt32("id_corpo_absorvido"),
++                            Nome = reader.GetString("nome_resultante"),
++                            Quantidade = reader.GetInt32("quantidade_resultante")
++                        });
++                    }
++                }
++            }
+         }
+ 
+         return quadros;
+@@ -575,6 +653,40 @@ SELECT ec.num_passo, ec.tempo_decorrido,
+         }
+     }
+ 
++    /* Grava no banco as fusões ocorridas em uma iteração (qual corpo absorveu qual).
++     * Fusões são raras (no máximo uma por corpo), então cada uma é gravada com um INSERT simples,
++     * reaproveitando a conexão da gravação dos passos. */
++    public void GravarFusoes(int numPasso, IEnumerable<Universo.FusaoOcorrida> fusoes)
++    {
++        foreach (var fusao in fusoes)
++        {
++            /* Procura no mapa os IDs do banco dos dois corpos envolvidos na fusão. */
++            if (!mapaIdCorpos.TryGetValue(fusao.Sobrevivente, out int idSobrevivente) ||
++                !mapaIdCorpos.TryGetValue(fusao.Absorvido, out int idAbsorvido))
++            {
++                throw new InvalidOperationException(
++                    "Um dos corpos da fusão não pertence à simulação iniciada.");
++            }
++
++            /* Abre a conexão só se ainda não estiver aberta; depois ela é reaproveitada. */
++            conexaoGravacao ??= ConexaoBD.ObterConexao();
++
++            using (MySqlCommand cmd = new MySqlCommand(@"
++                INSERT INTO Fusao (num_passo, id_corpo_sobrevivente, id_corpo_absorvido,
++                                   nome_resultante, massa_resultante, quantidade_resultante)
++                VALUES (@passo, @sobrevivente, @absorvido, @nome, @massa, @quantidade);", conexaoGravacao))
++            {
++                cmd.Parameters.AddWithValue("@passo", numPasso);
++                cmd.Parameters.AddWithValue("@sobrevivente", idSobrevivente);
++                cmd.Parameters.AddWithValue("@absorvido", idAbsorvido);
++                cmd.Parameters.AddWithValue("@nome", fusao.NomeResultante);
++                cmd.Parameters.AddWithValue("@massa", fusao.MassaResultante);
++                cmd.Parameters.AddWithValue("@quantidade", fusao.QuantidadeResultante);
++                cmd.ExecuteNonQuery();
++            }
++        }
++    }
++
+     /* Grava no banco todas as linhas acumuladas, com UM INSERT de várias linhas
+      * dentro de uma transação (ou grava o bloco inteiro, ou nada dele). */
+     public void DescarregarBuffer()
+@@ -599,7 +711,7 @@ SELECT ec.num_passo, ec.tempo_decorrido,
+                 {
+                     StringBuilder sql = new StringBuilder(
+                         "INSERT INTO EstadoCorpo (corpo_id, num_passo, tempo_decorrido, " +
+-                        "pos_x, pos_y, vel_x, vel_y, forca_x, forca_y, aceleracao_x, aceleracao_y) VALUES ");
++                        "pos_x, pos_y, vel_x, vel_y, forca_x, forca_y, aceleracao_x, aceleracao_y, massa, densidade) VALUES ");
+ 
+                     /* Cria um comando MySQL para executar a inserção em lote. Cada linha do 
+                      * buffer é adicionada como um conjunto de parâmetros com sufixos únicos 
+@@ -617,7 +729,7 @@ SELECT ec.num_passo, ec.tempo_decorrido,
+ 
+                             /* Adiciona uma vírgula entre os conjuntos de valores, exceto antes do primeiro conjunto. */
+                             if (i > 0) sql.Append(',');
+-                            sql.Append($"(@c{i},@n{i},@t{i},@px{i},@py{i},@vx{i},@vy{i},@fx{i},@fy{i},@ax{i},@ay{i})");
++                            sql.Append($"(@c{i},@n{i},@t{i},@px{i},@py{i},@vx{i},@vy{i},@fx{i},@fy{i},@ax{i},@ay{i},@m{i},@d{i})");
+ 
+                             /* Adiciona os parâmetros correspondentes para cada linha do buffer, 
+                              * usando sufixos únicos para evitar conflitos. */
+@@ -632,6 +744,8 @@ SELECT ec.num_passo, ec.tempo_decorrido,
+                             cmd.Parameters.AddWithValue($"@fy{i}", l.ForcaY);
+                             cmd.Parameters.AddWithValue($"@ax{i}", l.AceleracaoX);
+                             cmd.Parameters.AddWithValue($"@ay{i}", l.AceleracaoY);
++                            cmd.Parameters.AddWithValue($"@m{i}", l.Massa);
++                            cmd.Parameters.AddWithValue($"@d{i}", l.Densidade);
+                         }
+ 
+                         /* Define o texto do comando SQL com os valores acumulados no StringBuilder e executa a inserção em lote. */
+diff --git "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Program.cs" "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Program.cs"
+index da73c3c..b7ea924 100644
+--- "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Program.cs"	
++++ "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Program.cs"	
+@@ -107,12 +107,18 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
+     var universe = request.State.ToUniverse();
+     if (request.Steps < 1 || request.Steps > 100) throw new ArgumentException("Quantidade de passos inválida.");
+ 
++    /* Quantidade de passos a executar: o pedido, limitado ao que falta para chegar ao limite de iterações. */
+     var steps = Math.Min(request.Steps, universe.QuantidadeIteracoes - request.State.Iteration);
++
++    /* Conta quantos passos foram realmente executados (pode ser menos que "steps" se os corpos se fundirem em um só). */
+     var passosExecutados = 0;
+ 
++    /* Se o universo está sendo gravado (IdSimulacao > 0), o gravador retoma a simulação que a tela criou antes
++     * da primeira iteração. Os corpos são recriados a cada requisição, então o gravador refaz o mapa de IDs. */
+     using var gravador = request.State.IdSimulacao > 0 ? new GravadorUniversoBD() : null;
+     gravador?.RetomarSimulacao(request.State.IdSimulacao, universe.Corpos, request.State.Iteration);
+ 
++    /* O estado pode ter sido editado na tela (massa, posição...): recalcula forças e acelerações antes do primeiro passo. */
+     universe.CalcularForcas();
+ 
+     for (var i = 0; i < steps; i++)
+@@ -121,17 +127,24 @@ app.MapPost("/api/simulation/step", (StepRequest request) =>
+         if (universe.Corpos.Count <= 1)
+             break;
+ 
++        /* Avança uma iteração (posições Velocity Verlet, colisões e fusões, forças), com subpassos se houver corpos próximos. */
+         universe.AvancarIteracao(universe.TempoEntreIteracoes);
+         ValidateBodies(universe.Corpos);
+ 
+         passosExecutados++;
+ 
++        /* Grava no banco o estado de TODOS os corpos nesta iteração (posição, velocidade, força, aceleração, massa e densidade). */
+         gravador?.GravarPasso(
+             request.State.Iteration + passosExecutados,
+             request.State.Elapsed + passosExecutados * universe.TempoEntreIteracoes,
+             universe.Corpos);
++
++        /* Grava as fusões desta iteração (qual corpo absorveu qual) e limpa a lista, mesmo sem gravador. */
++        gravador?.GravarFusoes(request.State.Iteration + passosExecutados, universe.FusoesPendentes);
++        universe.FusoesPendentes.Clear();
+     }
+ 
++    /* Grava o que sobrou no buffer e fecha a conexão de gravação. */
+     gravador?.FinalizarSimulacao();
+ 
+     /* Snapshot para a execução do universo */
+@@ -316,7 +329,7 @@ record Snapshot(
+     public Universo ToUniverse()
+     {
+         /* Valida os parâmetros do Snapshot antes de criar o Universo. */
+-        if (QuantidadeIteracoes < 1 || QuantidadeIteracoes > int.MaxValue)
++        if (QuantidadeIteracoes < 1)
+             throw new ArgumentException("Quantidade de iterações inválida.");
+ 
+         /* Valida o tempo entre iterações, garantindo que seja finito e esteja dentro do 
+diff --git "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Universo.cs" "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Universo.cs"
+index 6660166..9d8d5be 100644
+--- "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Universo.cs"	
++++ "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/Universo.cs"	
+@@ -18,6 +18,21 @@ public class Universo
+     /* Lista de corpos presentes no universo. */
+     public List<Corpo> Corpos { get; private set; }
+ 
++    /* Registro de uma fusão: qual corpo sobreviveu, qual foi absorvido e como ficou o corpo resultante.
++     * Guarda as referências dos corpos (e não só os nomes) para o gravador achar o ID de cada um no banco. */
++    public class FusaoOcorrida
++    {
++        public Corpo Sobrevivente { get; set; } = null!;
++        public Corpo Absorvido { get; set; } = null!;
++        public string NomeResultante { get; set; } = string.Empty;
++        public double MassaResultante { get; set; }
++        public int QuantidadeResultante { get; set; }
++    }
++
++    /* Fusões ocorridas desde a última vez que quem chamou (o gravador) consumiu a lista.
++     * Quem consome deve gravar as fusões e depois chamar Clear(). */
++    public List<FusaoOcorrida> FusoesPendentes { get; } = new List<FusaoOcorrida>();
++
+     /* Quantidade de iterações que a simulação irá executar. */
+     public int QuantidadeIteracoes { get; set; }
+ 
+@@ -272,11 +287,15 @@ public class Universo
+     /* Trata colisões entre os corpos, fundindo os corpos que se encostarem. */
+     public void TratarColisoes()
+     {
++        /* Indica se alguma fusão aconteceu na passada atual. Como uma fusão remove um corpo da lista
++         * (e muda o raio e a posição do corpo resultante), a busca recomeça do início até
++         * que uma passada completa termine sem nenhuma fusão. */
+         bool houveFusao;
+         do
+         {
+             houveFusao = false;
+ 
++            /* Percorre cada par de corpos (i, j) uma única vez, com j sempre depois de i. */
+             for (int i = 0; i < Corpos.Count && !houveFusao; i++)
+             {
+                 for (int j = i + 1; j < Corpos.Count; j++)
+@@ -284,11 +303,15 @@ public class Universo
+                     Corpo corpo1 = Corpos[i];
+                     Corpo corpo2 = Corpos[j];
+ 
++                    /* Dois corpos (esferas) se tocam quando a distância entre os centros
++                     * é menor ou igual à soma dos seus raios. */
+                     double somaRaios = corpo1.Raio + corpo2.Raio;
+ 
+                     double dx = corpo2.PosX - corpo1.PosX;
+                     double dy = corpo2.PosY - corpo1.PosY;
+ 
++                    /* Compara os QUADRADOS das distâncias, o que evita calcular a raiz quadrada
++                     * (operação mais cara) para cada par de corpos. */
+                     double distanciaQuadrada = dx * dx + dy * dy;
+ 
+                     if (distanciaQuadrada <= somaRaios * somaRaios)
+@@ -321,16 +344,18 @@ public class Universo
+ 
+                         double novaDensidade = massaTotal / volumeTotal;
+ 
+-                        /* Nome do corpo resultante da fusão. */
+-                        string novoNome =
+-                            $"Fusão ({corpo1.Nome} + {corpo2.Nome})";
++                        /* Quantidade de corpos originais que formam o corpo resultante. */
++                        int novaQuantidade = corpo1.QuantidadeFundidos + corpo2.QuantidadeFundidos;
+ 
+-                        if (novoNome.Length > 60)
+-                            novoNome = novoNome.Substring(0, 60);
++                        /* Nome do super corpo: usa o nome original do corpo que sobrevive e a quantidade de corpos
++                         * fundidos, o que mantém o nome curto mesmo depois de várias fusões. */
++                        string novoNome =
++                            $"Super corpo {corpo1.NomeOriginal} ({novaQuantidade} corpos)";
+ 
+                         /* Atualiza o primeiro corpo com os dados da fusão.
+                          * Mantém a mesma instância para preservar seu ID no gravador do banco. */
+                         corpo1.Nome = novoNome;
++                        corpo1.QuantidadeFundidos = novaQuantidade;
+                         corpo1.Massa = massaTotal;
+                         corpo1.Densidade = novaDensidade;
+ 
+@@ -345,6 +370,16 @@ public class Universo
+                         corpo1.AceleracaoX = 0;
+                         corpo1.AceleracaoY = 0;
+ 
++                        /* Registra a fusão para ser gravada no banco (qual corpo absorveu qual). */
++                        FusoesPendentes.Add(new FusaoOcorrida
++                        {
++                            Sobrevivente = corpo1,
++                            Absorvido = corpo2,
++                            NomeResultante = novoNome,
++                            MassaResultante = massaTotal,
++                            QuantidadeResultante = novaQuantidade
++                        });
++
+                         /* Remove o segundo corpo, pois agora existe apenas um. */
+                         Corpos.RemoveAt(j);
+ 
+@@ -520,6 +555,10 @@ public class Universo
+ 
+                 /* Gravar o histórico do passo no MySQL. */
+                 gravador.GravarPasso(i, tempoDecorrido, Corpos);
++
++                /* Gravar as fusões ocorridas nesta iteração (qual corpo absorveu qual) e limpar a lista. */
++                gravador.GravarFusoes(i, FusoesPendentes);
++                FusoesPendentes.Clear();
+             }
+         }
+         /* Finally garante que o gravador finalize a simulação e 
+diff --git "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/wwwroot/app.js" "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/wwwroot/app.js"
+index a7438b6..d24d79c 100644
+--- "a/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/wwwroot/app.js"	
++++ "b/04 - C\303\223DIGO FINAL/SimuladorGravitacional-N2-Web/wwwroot/app.js"	
+@@ -292,6 +292,10 @@ async function replayFetch(inicio) {
+ as posições e velocidades gravadas e atualiza as trajetórias. */
+ async function replayAdvance(steps) {
+     const alvo = Math.min(replay.pos + steps, replay.max);
++
++    /* Conta as fusões deste lote de passos para avisar o usuário uma única vez. */
++    let totalFusoes = 0;
++
+     for (let passo = replay.pos + 1; passo <= alvo; passo++) {
+         if (!replay.buffer.has(passo)) await replayFetch(passo);
+         const quadro = replay.buffer.get(passo);
+@@ -319,13 +323,17 @@ corretamente mesmo que a ordem dos corpos mude. */
+         const novosCorpos = [];
+ 
+ /* Itera sobre cada corpo no quadro atual, atualizando suas posições e velocidades com base nos dados do replay, e mantendo os rastros de cada corpo. */
+-        quadro.corpos.forEach(([idCorpo, posX, posY, velX, velY]) => {
++        quadro.corpos.forEach(([idCorpo, posX, posY, velX, velY, massa, densidade]) => {
+             const corpo = corposPorId.get(idCorpo);
+ 
+             if (!corpo)
+                 throw new Error('Corpo não encontrado no histórico do Replay.');
+ 
+-            Object.assign(corpo, { posX, posY, velX, velY });
++            /* A massa e a densidade vêm do banco a cada passo, pois mudam quando o corpo se funde com outro.
++             * O raio físico é recalculado como esfera (r = raiz cúbica de 3V/4π, com V = massa/densidade),
++             * a mesma fórmula usada em Corpo.cs. */
++            const raio = Math.cbrt((3 * (massa / densidade)) / (4 * Math.PI));
++            Object.assign(corpo, { posX, posY, velX, velY, massa, densidade, raio });
+ 
+             const rastro = rastrosPorId.get(idCorpo) || [];
+ 
+@@ -337,6 +345,16 @@ corretamente mesmo que a ordem dos corpos mude. */
+             novosCorpos.push(corpo);
+         });
+ 
++        /* Aplica as fusões deste passo: o corpo que sobreviveu passa a ter o nome do super corpo. */
++        for (const fusao of quadro.fusoes || []) {
++            const sobrevivente = corposPorId.get(fusao.sobrevivente);
++            if (sobrevivente) {
++                sobrevivente.nome = fusao.nome;
++                sobrevivente.quantidadeFundidos = fusao.quantidade;
++            }
++            totalFusoes++;
++        }
++
+         state.corpos = novosCorpos;
+         trails = novosCorpos.map(corpo =>
+             rastrosPorId.get(corpo.idCorpoBanco) || []
+@@ -350,6 +368,7 @@ corretamente mesmo que a ordem dos corpos mude. */
+     }
+ /* Atualiza a interface do usuário, incluindo métricas, lista de corpos e detalhes do corpo selecionado, se necessário. */
+     updateUI(performance.now() - lastListUpdate > 400);
++    if (totalFusoes > 0) toast(`Fusão: ${totalFusoes} corpo(s) absorvido(s) até o passo ${replay.pos}.`);
+     if (replay.pos >= replay.max) { pause(); toast('Replay concluído.'); }
+ }
+ 
