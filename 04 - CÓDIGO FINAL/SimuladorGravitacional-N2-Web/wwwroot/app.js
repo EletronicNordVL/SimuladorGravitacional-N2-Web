@@ -130,14 +130,36 @@ function stopSession() {
  * iteração 0), o servidor cria a simulação no MySQL. Se o banco estiver indisponível, a simulação segue sem gravar. */
 async function ensureSession() {
     if (session || replay) return;
+
     const gravar = $('record').checked && state.iteration === 0;
-    const result = await api('/api/simulation/start', { state, gravar, paralelo: $('parallel').checked });
+
+    const result = await api('/api/simulation/start', {
+        state,
+        gravar,
+        paralelo: $('parallel').checked
+    });
+
     session = result.sessao;
     threads = result.threads;
-    state = result.state; /* Mesmos corpos, na mesma ordem, com nomes únicos e os IDs do banco. */
+    state = result.state;
+
     updateMode();
-    if (result.aviso) { $('record').checked = false; toast(result.aviso, true); }
-    else if (state.idSimulacao > 0) toast('Gravando cada iteração no banco de dados.');
+
+    if (result.aviso) {
+        $('record').checked = false;
+        toast(result.aviso, true);
+    }
+    else if (state.idSimulacao > 0) {
+        toast('Gravando cada iteração no banco de dados.');
+    }
+    else if ($('record').checked && state.iteration > 0) {
+        $('record').checked = false;
+
+        toast(
+            'A sessão anterior foi perdida. A simulação continuará sem gravar novas iterações no banco.',
+            true
+        );
+    }
 }
 
 /* Pede ao servidor que avance a simulação. Se a sessão expirou (ou o servidor reiniciou), cria outra a partir do
@@ -353,12 +375,21 @@ corretamente mesmo que a ordem dos corpos mude. */
             novosCorpos.push(corpo);
         });
 
+        const idSelecionado = state.corpos[selected]?.idCorpoBanco;
+
         state.corpos = novosCorpos;
+
         trails = novosCorpos.map(corpo =>
             rastrosPorId.get(corpo.idCorpoBanco) || []
         );
 
-        selected = Math.min(selected, state.corpos.length - 1);
+        const novoIndiceSelecionado = novosCorpos.findIndex(
+            corpo => corpo.idCorpoBanco === idSelecionado
+        );
+
+        selected = novoIndiceSelecionado >= 0
+            ? novoIndiceSelecionado
+            : Math.min(selected, novosCorpos.length - 1);
 
 /* Remove o quadro do buffer após aplicá-lo, liberando memória, e atualiza a posição atual do replay. */
         replay.buffer.delete(passo);
@@ -658,7 +689,51 @@ async function loadLibrary() {
     try {
         const files = await api('/api/universes', undefined, 'GET');
         $('saved-list').replaceChildren();
-        if (!files.length) { const p = document.createElement('p'); p.className = 'empty-state'; p.textContent = 'Ainda não há universos salvos. Salve seu primeiro experimento para encontrá-lo aqui.'; $('saved-list').append(p); }
+
+        /* Cria o botão para excluir todas as simulações salvas. */
+        if (files.length > 0) {
+            const deleteAll = document.createElement('button');
+
+            deleteAll.className = 'button button-outline';
+            deleteAll.textContent = 'Excluir todas as simulações';
+
+            deleteAll.addEventListener('click', async () => {
+                const confirmado = await confirmAction(
+                    'Excluir todas as simulações?',
+                    'Todas as simulações e seus registros associados serão excluídos permanentemente. Esta ação não pode ser desfeita.'
+                );
+
+                if (!confirmado) return;
+
+                try {
+                    pause();
+
+                    await api('/api/universes', undefined, 'DELETE');
+
+                    if (replay) {
+                        replay = null;
+                        session = null;
+                        updateMode();
+                    }
+
+                    toast('Todas as simulações foram excluídas.');
+                }
+                catch (error) {
+                    toast(error.message, true);
+                }
+
+                await loadLibrary();
+            });
+
+            $('saved-list').append(deleteAll);
+        }
+
+        if (!files.length) {
+            const p = document.createElement('p');
+            p.className = 'empty-state';
+            p.textContent = 'Ainda não há universos salvos. Salve seu primeiro experimento para encontrá-lo aqui.';
+            $('saved-list').append(p);
+        }
 /* Itera sobre cada arquivo salvo, criando elementos de interface para exibir o nome, data de modificação 
 e botões para abrir, excluir ou iniciar o replay da simulação. */
         files.forEach(file => {
