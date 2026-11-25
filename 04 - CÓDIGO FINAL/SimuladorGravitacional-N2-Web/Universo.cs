@@ -65,7 +65,6 @@ public class Universo
         var total = new (double X, double Y)[quantidade];
         var trava = new object();
 
-        /* Comoputação paralela */
         Parallel.For(0, quantidade,
             () => new (double X, double Y)[quantidade],
             (i, _, local) =>
