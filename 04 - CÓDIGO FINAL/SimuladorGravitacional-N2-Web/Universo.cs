@@ -65,6 +65,7 @@ public class Universo
         var total = new (double X, double Y)[quantidade];
         var trava = new object();
 
+        /* Comoputação paralela */
         Parallel.For(0, quantidade,
             () => new (double X, double Y)[quantidade],
             (i, _, local) =>
@@ -204,9 +205,11 @@ public class Universo
              * seguintes são conferidos de novo, porque depois de uma fusão o corpo "a"
              * fica maior e pode alcançar outros. Assim N1 e N2 dão o mesmo resultado. */
             int inicio = i + 1;
-
-            if (UsarParalelismo && candidatos[i] is not { Count: > 0 })
-                continue;
+            if (UsarParalelismo)
+            {
+                if (candidatos[i] is not { } pares) continue;
+                inicio = pares[0];
+            }
 
             for (int j = inicio; j < quantidade; j++)
             {
@@ -347,46 +350,28 @@ public class Universo
     {
         Random random = Random.Shared;
         double[] densidades = { 500, 1000, 2000, 3000, 5000, 7874, 11340 };
-
         int quantidadeGigantes = Math.Max(2, quantidade / 5);
-
-        // Área menor para aumentar a proximidade inicial dos corpos.
-        const double larguraUtil = 500;
-        const double alturaUtil = 300;
-
-        // Velocidades iniciais menores para favorecer encontros gravitacionais.
-        const double velocidadeMaxima = 30;
-
+        const double larguraUtil = 1050 - 100;
+        const double alturaUtil = 650 - 100;
         const double escalaVelocidade = MetrosPorUnidade / SegundosPorUnidade;
 
         for (int i = 0; i < quantidade; i++)
         {
             bool gigante = i < quantidadeGigantes;
-
             double expoente = gigante
                 ? 2.0 + random.NextDouble() * 1.2
                 : 0.4 + random.NextDouble() * 1.6;
-
             double massa = Math.Pow(10, expoente) * MassaPorUnidade;
-
-            double densidade = densidades[random.Next(densidades.Length)]
-                * (0.7 + random.NextDouble() * 0.6);
-
-            double velocidade = random.NextDouble() * velocidadeMaxima * escalaVelocidade;
+            double densidade = densidades[random.Next(densidades.Length)] * (0.7 + random.NextDouble() * 0.6);
+            double velocidade = random.NextDouble() * 80 * escalaVelocidade;
             double angulo = random.NextDouble() * Math.Tau;
-
-            double posX = (random.NextDouble() - 0.5)
-                * larguraUtil * MetrosPorUnidade;
-
-            double posY = (random.NextDouble() - 0.5)
-                * alturaUtil * MetrosPorUnidade;
-
+            double posX = (random.NextDouble() - 0.5) * larguraUtil * MetrosPorUnidade;
+            double posY = (random.NextDouble() - 0.5) * alturaUtil * MetrosPorUnidade;
             string prefixo = gigante ? "Gigante" : "Corpo";
 
             AdicionarCorpo(new Corpo($"{prefixo}-{i + 1:D3}", massa,
                 Math.Clamp(densidade, 500, 15000), posX, posY,
-                Math.Cos(angulo) * velocidade,
-                Math.Sin(angulo) * velocidade));
+                Math.Cos(angulo) * velocidade, Math.Sin(angulo) * velocidade));
         }
     }
 }

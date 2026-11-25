@@ -292,45 +292,16 @@ app.MapGet("/api/universes/{id:int}", (int id) =>
     return Results.Ok(state);
 });
 
-/* Rota para excluir todas as simulações salvas no banco de dados. */
-app.MapDelete("/api/universes", async () =>
+/*  Rota para excluir uma simulação do MySQL. As linhas de Corpo e EstadoCorpo são removidas em cascata (ON DELETE CASCADE). */
+app.MapDelete("/api/universes/{id:int}", (int id) =>
 {
-    var avisos = new List<string>();
-
-    /* Encerra todas as sessões ativas antes de excluir os registros. */
-    foreach (var id in sessoes.Keys.ToArray())
-    {
-        if (!sessoes.TryRemove(id, out var sessao))
-            continue;
-
-        await sessao.Trava.WaitAsync();
-
-        try
-        {
-            var aviso = await sessao.TerminarGravacaoAsync();
-
-            if (aviso is not null)
-                avisos.Add(aviso);
-        }
-        finally
-        {
-            sessao.Trava.Release();
-        }
-    }
-
-    /* Exclui todas as simulações. As tabelas relacionadas são limpas
-     * pelas restrições ON DELETE CASCADE do banco de dados. */
+    /* Cria uma instância do GravadorUniversoBD para acessar o banco de dados e excluir a simulação com o ID informado. */
     using var gravador = new GravadorUniversoBD();
 
-    int excluidas = gravador.ExcluirTodasSimulacoes();
-
-    return Results.Ok(new
-    {
-        excluidas,
-        aviso = avisos.Count > 0
-            ? string.Join(" ", avisos)
-            : null
-    });
+    /* Retorna 204 (No Content) se a simulação foi excluída ou 404 (Not Found) se ela não existir. */
+    return gravador.ExcluirSimulacao(id)
+        ? Results.NoContent()
+        : Results.NotFound(new { error = "Simulação não encontrada." });
 });
 
 /*  Rota que retorna os dados gerais de uma simulação gravada para o replay como o nome, o último passo gravado e o estado
