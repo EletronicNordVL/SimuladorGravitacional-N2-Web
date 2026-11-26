@@ -1,9 +1,9 @@
-/* 1. Criação e Seleção do Banco de Dados */
+/* 1) Criação e Seleção do Banco de Dados */
 /* DROP DATABASE IF EXISTS simulador_gravitacional; */
 CREATE DATABASE IF NOT EXISTS simulador_gravitacional; 
 USE simulador_gravitacional;
 
-/* 2. Tabela de Simulacao */
+/* 2) Tabela de Simulacao */
 CREATE TABLE Simulacao (
   id_simulacao INT PRIMARY KEY AUTO_INCREMENT,
   nome VARCHAR(255) NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE Simulacao (
   tempo_entre_iteracoes DOUBLE NOT NULL
 );
 
-/* 3. Tabela de Corpos */
+/* 3) Tabela de Corpos */
 CREATE TABLE Corpo (
   id_corpo INT PRIMARY KEY AUTO_INCREMENT,
   id_simulacao INT NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE Corpo (
   densidade DOUBLE NOT NULL
 );
 
-/* 4. Tabela de EstadoCorpo */
+/* 4) Tabela de EstadoCorpo */
 CREATE TABLE EstadoCorpo (
   id_registro BIGINT PRIMARY KEY AUTO_INCREMENT,
   corpo_id INT NOT NULL, 
@@ -41,7 +41,7 @@ CREATE TABLE EstadoCorpo (
   aceleracao_y DOUBLE NOT NULL
 );
 
-/* 5. Definição das Chaves Estrangeiras (FKs) */
+/* 5) Definição das Chaves Estrangeiras (FKs) */
 ALTER TABLE Corpo 
    ADD CONSTRAINT FK_Corpo_Simulacao 
    FOREIGN KEY (id_simulacao) 
@@ -54,10 +54,14 @@ ALTER TABLE EstadoCorpo
    REFERENCES Corpo (id_corpo) 
    ON DELETE CASCADE;
    
-/* 6. Criação de Indice de Performance para Otimizar a Leitura do Replay */
+/* 6) Criação de IndiceS de Performance para otimizar a leitura do replay e limpeza automática */
 CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
+CREATE INDEX idx_simulacao_data_criacao ON Simulacao(data_criacao);
 
-/* 7. Lista de Selects */
+/* 6.1) Criação do índice composto para otimizar o SELECT do Replay por corpo e número do passo */
+CREATE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);
+
+/* 7) Lista de Selects */
 /* A) Ver a simulação criada */
 SELECT * FROM Simulacao;
 
@@ -84,19 +88,18 @@ SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER 
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
 
 /* C.3) Consultar Iterações
-/* Informe o ID da simulação desejada. */
+/* Informe o ID da simulação desejada e consultar a última iteração gravada de uma simulação */
 SELECT * FROM Simulacao;
 SET @id_simulacao = 54;
-
-/* Consultar a última iteração gravada de uma simulação */
-SELECT ec.* FROM EstadoCorpo ec
+SELECT ec.*
+FROM EstadoCorpo ec
 INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
-WHERE c.id_simulacao = 56
+WHERE c.id_simulacao = @id_simulacao
 AND ec.num_passo = (
     SELECT MAX(ec2.num_passo)
     FROM EstadoCorpo ec2
     INNER JOIN Corpo c2 ON c2.id_corpo = ec2.corpo_id
-    WHERE c2.id_simulacao = 56
+    WHERE c2.id_simulacao = @id_simulacao
 );
 
 /* C.4) Select Alternativo de encontrar última iteração */
@@ -137,26 +140,12 @@ DESCRIBE Corpo;
 SELECT COUNT(*) FROM EstadoCorpo WHERE corpo_id IN (SELECT id_corpo FROM Corpo WHERE id_simulacao = 19);
 
 /* G) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
+DROP PROCEDURE IF EXISTS sp_limpar_simulacoes_antigas;
 DELIMITER $$
 CREATE PROCEDURE sp_limpar_simulacoes_antigas()
 BEGIN
-    DECLARE v_id INT DEFAULT NULL;
-
-    limpeza: LOOP
-        SET v_id = NULL;
-
-        SELECT id_simulacao INTO v_id
-        FROM Simulacao
-        WHERE data_criacao < DATE_SUB(NOW(), INTERVAL 1 MONTH)
-        ORDER BY data_criacao
-        LIMIT 1;
-
-        IF v_id IS NULL THEN
-            LEAVE limpeza;
-        END IF;
-
-        DELETE FROM Simulacao WHERE id_simulacao = v_id;
-    END LOOP;
+    DELETE FROM Simulacao
+    WHERE data_criacao < DATE_SUB(NOW(), INTERVAL 1 MONTH);
 END $$
 DELIMITER ;
 
@@ -169,3 +158,6 @@ DO CALL sp_limpar_simulacoes_antigas();
 /* 6.2) Verificar se o Agendador está ligado */
 SHOW VARIABLES LIKE 'event_scheduler';
 SHOW EVENTS FROM simulador_gravitacional;
+
+/* 6.3) Se o agendador estiver desligado (OFF), há opção de ativar o agendador */
+SET GLOBAL event_scheduler = ON;
