@@ -3,7 +3,7 @@
 CREATE DATABASE IF NOT EXISTS simulador_gravitacional; 
 USE simulador_gravitacional;
 
-/* 2) Tabela de Simulacao */
+/* 2) Tabela de Simulacao que armazena os dados gerais de cada simulação. */
 CREATE TABLE Simulacao (
   id_simulacao INT PRIMARY KEY AUTO_INCREMENT,
   nome VARCHAR(255) NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE Simulacao (
   tempo_entre_iteracoes DOUBLE NOT NULL
 );
 
-/* 3) Tabela de Corpos */
+/* 3) Tabela de Corpos que armazena os corpos associados a cada simulação. */
 CREATE TABLE Corpo (
   id_corpo INT PRIMARY KEY AUTO_INCREMENT,
   id_simulacao INT NOT NULL,
@@ -22,7 +22,7 @@ CREATE TABLE Corpo (
   densidade DOUBLE NOT NULL
 );
 
-/* 4) Tabela de EstadoCorpo */
+/* 4) Tabela de EstadoCorpo que registra o histórico dos corpos ao longo das iterações. */
 CREATE TABLE EstadoCorpo (
   id_registro BIGINT PRIMARY KEY AUTO_INCREMENT,
   corpo_id INT NOT NULL, 
@@ -65,7 +65,7 @@ CREATE INDEX idx_simulacao_data_criacao ON Simulacao(data_criacao);
 /* 7) Ver a simulação criada */
 SELECT * FROM Simulacao;
 
-/* 7.1) Ver a última iteração da Simulção */
+/* 7.1) Ver a última iteração da Simulação */
 SELECT *
 FROM Simulacao
 where id_simulacao = '56';
@@ -87,8 +87,8 @@ SELECT COUNT(*) FROM EstadoCorpo;
 SELECT ec.corpo_id, c.nome, COUNT(*) AS total_estados FROM EstadoCorpo ec INNER JOIN Corpo c ON c.id_corpo = ec.corpo_id
 GROUP BY ec.corpo_id, c.nome ORDER BY ec.corpo_id;
 
-/* 7.7) Consultar Iterações
-/* Informe o ID da simulação desejada e consultar a última iteração gravada de uma simulação */
+/* Consulta de Iterações */
+/* 7.7) Informar o ID da simulação desejada e consultar a última iteração gravada de uma simulação */
 SELECT * FROM Simulacao;
 SET @id_simulacao = 54;
 SELECT ec.*
@@ -156,12 +156,12 @@ DELETE FROM Simulacao; */
 /* 9) Comando para uma consulta de um EstadoCorpo utilizando o Explain Select */
 EXPLAIN SELECT * FROM EstadoCorpo WHERE corpo_id = 1 AND num_passo = 50;
 
-/* 9.1) Ter a descrição completo dos Corpos e seus estados */
+/* 9.1) Ter a descrição completa dos Corpos e seus estados */
 DESCRIBE EstadoCorpo;
 DESCRIBE Corpo;
 
 /* ADIÇÃO DO STORED PROCEDURE */
-/* 10) Adicionar o 'Stored Procedure' para remover registros com mais de 1 mês de antiguidade */
+/* 10) Adicionar o 'Stored Procedure' para remover registros de simulação com mais de 1 mês de antiguidade e seus dados relacionados. */
 DROP PROCEDURE IF EXISTS sp_limpar_simulacoes_antigas;
 DELIMITER $$
 CREATE PROCEDURE sp_limpar_simulacoes_antigas()
@@ -175,7 +175,7 @@ DELIMITER ;
 SHOW CREATE PROCEDURE sp_limpar_simulacoes_antigas;
 
 /* SEÇÃO DE LIMPEZA, AGENDADOR E EXISTÊNCIA DE EVENTOS */
-/* 11) Criar um evento para executar a limpeza automaticamente uma vez por dia */
+/* 11) Criar um evento para executar a limpeza automaticamente uma vez por dia. Ou seja, executar a rotina automaticamente a cada dia. */
 CREATE EVENT IF NOT EXISTS ev_limpar_simulacoes_antigas
 ON SCHEDULE EVERY 1 DAY
 STARTS CURRENT_TIMESTAMP + INTERVAL 1 DAY
