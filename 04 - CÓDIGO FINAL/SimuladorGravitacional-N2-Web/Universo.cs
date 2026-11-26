@@ -224,6 +224,7 @@ public class Universo
         Corpos.RemoveAll(absorvidos.Contains);
     }
 
+    /* Parte do código focado em fusão */ 
     private static void Fundir(Corpo a, Corpo b)
     {
         double massa = a.Massa + b.Massa;
