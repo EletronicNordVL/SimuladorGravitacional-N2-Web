@@ -54,12 +54,13 @@ ALTER TABLE EstadoCorpo
    REFERENCES Corpo (id_corpo) 
    ON DELETE CASCADE;
    
-/* 6) Criação de IndiceS de Performance para otimizar a leitura do replay e limpeza automática */
-CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
-CREATE INDEX idx_simulacao_data_criacao ON Simulacao(data_criacao);
+/* 6) Seção dos Índices */
 
-/* 6.1) Criação do índice composto para otimizar o SELECT do Replay por corpo e número do passo */
-CREATE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);
+/* 6.1) Índice único para otimizar o replay por corpo e número do passo. */
+CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo(corpo_id, num_passo);
+
+/* 6.2) Índice para otimizar a busca de simulações antigas. */
+CREATE INDEX idx_simulacao_data_criacao ON Simulacao(data_criacao);
 
 /* 7) Lista de Selects */
 /* A) Ver a simulação criada */

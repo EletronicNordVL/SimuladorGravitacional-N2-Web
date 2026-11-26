@@ -35,14 +35,15 @@ CREATE TABLE EstadoCorpo (
     corpo_id INT NOT NULL
 );
  
-ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_3
+ALTER TABLE Corpo ADD CONSTRAINT FK_Corpo_Simulacao
     FOREIGN KEY (id_simulacao)
     REFERENCES Simulacao (id_simulacao)
     ON DELETE CASCADE;
  
-ALTER TABLE EstadoCorpo ADD CONSTRAINT FK_EstadoCorpo_2
+ALTER TABLE EstadoCorpo ADD CONSTRAINT FK_EstadoCorpo_Corpo
     FOREIGN KEY (corpo_id)
     REFERENCES Corpo (id_corpo)
     ON DELETE CASCADE;
     
 CREATE UNIQUE INDEX idx_estado_corpo_passo ON EstadoCorpo (corpo_id, num_passo);
+CREATE INDEX idx_simulacao_data_criacao ON Simulacao(data_criacao);
